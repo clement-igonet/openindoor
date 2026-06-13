@@ -371,14 +371,17 @@
 
     const MOUSE_SENS = 0.0022;
     addEventListener("mousemove", (e) => {
-      if (document.pointerLockElement === canvas) player.heading -= e.movementX * MOUSE_SENS;
+      if (document.pointerLockElement !== canvas) return;
+      player.heading -= e.movementX * MOUSE_SENS;     // left/right = turn
+      const step = -e.movementY * 0.05;               // up = forward, down = back
+      if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
     });
     // Trackpad / wheel: a single two-finger pan turns (horizontal) AND moves
     // forward/back (vertical) at the same time. (One finger with pointer-lock
     // also turns via mousemove above.)
     addEventListener("wheel", (e) => {
       e.preventDefault();
-      player.heading -= e.deltaX * 0.004;            // horizontal pan = turn
+      player.heading += e.deltaX * 0.004;            // horizontal pan = turn
       const step = -e.deltaY * 0.02;                 // vertical pan = forward/back
       if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
     }, { passive: false });
