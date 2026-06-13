@@ -345,10 +345,10 @@
       y: (start.r + 0.5) * CELL,
       heading: -Math.PI / 2,   // start facing 90° to the right
     };
-    const RADIUS = 1.6; // collision radius (m): kept large so the eye doesn't press
-                        // right up against a wall (the near-horizontal view makes a
-                        // close wall fill the screen). Still < 2 m, so 4 m corridors
-                        // and doorways stay passable.
+    const RADIUS = 1.8; // collision radius (m): stop well before a wall so the level
+                        // horizon view can't nose up to the base and peek over the
+                        // 3 m top. Still < 2 m, so 4 m corridors / doorways stay
+                        // passable (tighten toward 2.0 for more buffer, less play).
 
     const isWall = (x, y) => {
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
