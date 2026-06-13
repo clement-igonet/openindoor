@@ -304,7 +304,8 @@
         if (dist > bestDist) continue;
         const ang = Math.atan2(dy, dx);
         const off = Math.abs(((ang - player.heading + Math.PI) % (2 * Math.PI)) - Math.PI);
-        if (off < 0.22) { bestDist = dist; best = e; }   // ~13° cone
+        // within the cone AND not behind a wall (can't shoot through walls)
+        if (off < 0.22 && hasLineOfSight(player.x, player.y, e.x, e.y)) { bestDist = dist; best = e; }
       }
       if (best) {
         best.alive = false;
