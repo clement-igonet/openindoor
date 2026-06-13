@@ -155,15 +155,40 @@
       ]] },
     };
 
-    // Enemies: original billboard sprites placed in room interiors.
+    // Enemy roster — original, generic types (no real-world factions/figures),
+    // with hit points + difficulty scaling adapted from classic FPS conventions.
+    // Difficulty via ?diff=baby|easy|normal|hard (default normal).
+    const DIFF = ({ baby: 0, easy: 1, normal: 2, hard: 3 })[
+      (location.search.match(/diff=(\w+)/) || [])[1]
+    ] ?? 2;
+    const TYPES = {
+      guard:   { hp: [25, 25, 25, 25],       color: "#566b3f", head: "#caa07a", body: 2.0, w: 0.8 },
+      trooper: { hp: [100, 100, 100, 100],   color: "#39507e", head: "#caa07a", body: 2.2, w: 0.9 },
+      hound:   { hp: [1, 1, 1, 1],           color: "#6b4a2b", head: "#7a5230", body: 0.9, w: 0.7 },
+      officer: { hp: [50, 50, 50, 50],       color: "#9aa07a", head: "#caa07a", body: 2.0, w: 0.8 },
+      brute:   { hp: [45, 55, 55, 65],       color: "#7a3b2e", head: "#caa07a", body: 2.6, w: 1.1 },
+      boss:    { hp: [850, 950, 1050, 1200], color: "#2a2a30", head: "#b08060", body: 3.0, w: 1.4 },
+    };
+    const ROSTER = ["guard", "guard", "officer", "hound", "trooper", "guard", "brute", "officer"];
     const enemies = [];
+    let ei = 0;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        if (MAZE[r][c] !== "#" && r % 5 === 3 && c % 5 === 3 &&
-            !(r === start.r && c === start.c)) {
-          enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, alive: true });
+        if (MAZE[r][c] !== "#" && r % 5 === 3 && c % 5 === 3 && !(r === start.r && c === start.c)) {
+          const type = ROSTER[ei++ % ROSTER.length];
+          enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, type, hp: TYPES[type].hp[DIFF], alive: true });
         }
       }
+    }
+    // Promote the enemy farthest from the start to a boss.
+    if (enemies.length) {
+      const sx = (start.c + 0.5) * CELL, sy = (start.r + 0.5) * CELL;
+      let far = enemies[0], fd = -1;
+      for (const e of enemies) {
+        const d = Math.hypot(e.x - sx, e.y - sy);
+        if (d > fd) { fd = d; far = e; }
+      }
+      far.type = "boss"; far.hp = TYPES.boss.hp[DIFF];
     }
     // Enemies as depth-tested 3D figures (a body box + a head box) so the walls
     // occlude them correctly. Symbol billboards always draw on top of WebGL
@@ -174,12 +199,15 @@
     ]];
     const enemiesGeoJSON = () => ({
       type: "FeatureCollection",
-      features: enemies.filter((e) => e.alive).flatMap((e) => [
-        { type: "Feature", properties: { color: "#566b3f", base: 0,   height: 2.0 },
-          geometry: { type: "Polygon", coordinates: sq(e.x, e.y, 0.8) } },
-        { type: "Feature", properties: { color: "#caa07a", base: 2.0, height: 2.7 },
-          geometry: { type: "Polygon", coordinates: sq(e.x, e.y, 0.45) } },
-      ]),
+      features: enemies.filter((e) => e.alive).flatMap((e) => {
+        const t = TYPES[e.type];
+        return [
+          { type: "Feature", properties: { color: t.color, base: 0, height: t.body },
+            geometry: { type: "Polygon", coordinates: sq(e.x, e.y, t.w) } },
+          { type: "Feature", properties: { color: t.head, base: t.body, height: t.body + 0.7 },
+            geometry: { type: "Polygon", coordinates: sq(e.x, e.y, t.w * 0.55) } },
+        ];
+      }),
     });
 
     // ---------------------------------------------------------------------
@@ -286,6 +314,7 @@
     const weaponEl = document.getElementById("weapon");
     const flashEl = document.getElementById("flash");
     let canFire = true;
+    const SHOT_DMG = 50;   // shotgun damage per shot
     function fire() {
       if (!canFire) return;
       canFire = false;
@@ -314,9 +343,12 @@
         if (vis) { bestDist = dist; best = e; }
       }
       if (best) {
-        best.alive = false;
-        const s = map.getSource("enemies");
-        if (s) s.setData(enemiesGeoJSON());
+        best.hp -= SHOT_DMG;
+        if (best.hp <= 0) {
+          best.alive = false;
+          const s = map.getSource("enemies");
+          if (s) s.setData(enemiesGeoJSON());
+        }
       }
     }
     addEventListener("keydown", (e) => { if (e.code === "Space") { e.preventDefault(); fire(); } });
@@ -505,13 +537,15 @@
       wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
       moss:  "walls/030.png", cave:  "walls/032.png",
     };
+    const loadingTex = new Set();
     map.on("styleimagemissing", (e) => {
-      if (map.hasImage(e.id)) return;
-      // Add a procedural placeholder immediately (stops the event from
-      // re-firing), then upgrade to the original tile PNG once it loads.
-      map.addImage(e.id, makeTexture(e.id));
+      if (map.hasImage(e.id) || loadingTex.has(e.id)) return;
       const url = TILE[e.id];
-      if (url) map.loadImage(url).then((img) => { if (img && img.data) map.updateImage(e.id, img.data); }).catch(() => {});
+      if (!url) { map.addImage(e.id, makeTexture(e.id)); return; }   // non-tile ids
+      loadingTex.add(e.id);                                          // avoid repeat loads
+      map.loadImage(url)
+        .then((img) => { if (img && img.data && !map.hasImage(e.id)) map.addImage(e.id, img.data); })
+        .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
     });
 
     map.on("load", () => { try { map.setMaxPitch(85); } catch (_) {} });
