@@ -191,12 +191,11 @@
     const CELL   = 4;     // metres per grid cell
     const WALL_H = 3;     // wall height (metres)
     const EYE_H  = 1.75;  // eye height (metres) — human
-    const PITCH     = 89.7;// camera pitch (deg). ~90 = horizontal; at exactly 90 the eye
-                           // drops to the floor (altitude = cos(pitch)·dist = 0). Each
-                           // degree below 90 tilts the view down, dropping the crosshair
-                           // by tan(90-pitch)/metre — so we sit very close to horizontal
-                           // (0.3° down) to keep the centre cross on enemies' torsos, not
-                           // their legs, even out at the cull distance.
+    const PITCH     = 89;  // camera pitch (deg). ~90 = horizontal; at exactly 90 the eye
+                           // drops to the floor (altitude = cos(pitch)·dist = 0), so 89.
+                           // (NB: don't raise this toward 90 to fix aim — it lowers the
+                           // derived zoom and blows up the wall-texture scale. The real
+                           // aim fix is sizing the enemy sprite correctly; see GH below.)
     const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
     const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
