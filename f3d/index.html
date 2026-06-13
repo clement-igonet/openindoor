@@ -262,7 +262,7 @@
       hound:   { hp: [1, 1, 1, 1],           h: 1.82 },
       officer: { hp: [50, 50, 50, 50],       h: 1.85 },
       brute:   { hp: [45, 55, 55, 65],       h: 2.10 },
-      boss:    { hp: [850, 950, 1050, 1200], h: 2.20 },
+      boss:    { hp: [300, 400, 500, 600],   h: 2.20 },
     };
     // ---------------------------------------------------------------------
     // Sprite atlas config. Enemies are drawn by cropping ONE frame out of a
@@ -278,18 +278,20 @@
     // cols/rows/fw/fh/dirs/walkRows/deathFrames to light it all up.
     // ---------------------------------------------------------------------
     const SPRITE = {
-      src: "enemies/guard.png",
-      cols: 1, rows: 1,          // sheet grid
-      fw: 44, fh: 106,           // one frame, px
-      dirs: 1,                   // viewing directions per pose (8 for a Wolf-style sheet)
-      standRow: 0,               // row shown when not moving
-      walkRows: [0],             // rows cycled while moving
+      src: "enemies/warrior_sprites.png",  // ORIGINAL art (not the Wolf3D rip)
+      cols: 8, rows: 7,          // sheet grid (512×448 → exact 64 px cells)
+      fw: 64, fh: 64,            // one frame, px (square cell)
+      dirs: 8,                   // 8 viewing directions per pose (true billboard)
+      standRow: 0,               // row 0 = standing (8 dirs)
+      walkRows: [1, 2, 3, 4],    // rows 1-4 = walk cycle (8 dirs each)
       walkFps: 6,
-      deathFrames: [],           // [[col,row],…] death sequence ([] → just vanish)
+      deathFrames: [[0,5],[1,5],[2,5],[3,5],[4,5]],  // row 5 = death → corpse
       deathFps: 8,
-      // Order of the `dirs` columns, as the angle (deg) of the guard's facing
-      // relative to the viewer for each column (0 = facing the camera/front).
+      // Rotate the column→angle mapping if the facings come out wrong/mirrored.
       dirOffset: 0,
+      bodyFrac: 0.55,            // figure occupies ~this fraction of the square cell
+                                 // width; used to keep the hit-box on the body, not
+                                 // the transparent sides.
     };
     const ASPECT = SPRITE.fw / SPRITE.fh;
     const SIGHT = 52;   // metres: draw / allow hitting enemies out to here
@@ -561,7 +563,9 @@
         if (!e.alive) continue;
         const r = spriteRect(e, ccy);                                // null if hidden
         if (!r) continue;
-        const on = ccx >= r.x && ccx <= r.x + r.w && ccy >= r.y && ccy <= r.y + r.h;
+        const bw = r.w * SPRITE.bodyFrac, bx = r.x + (r.w - bw) / 2;  // body, not the
+        const on = ccx >= bx && ccx <= bx + bw && ccy >= r.y && ccy <= r.y + r.h; // transparent sides
+
         if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
         if (on && r.dist < bestDist) { bestDist = r.dist; best = e; }
       }
@@ -573,6 +577,9 @@
           best.alive = false;                              // no longer targetable / blocking
           if (SPRITE.deathFrames.length) { best.dead = true; best.deadAt = performance.now(); } // play death
           else if (best._el) best._el.style.display = "none";                                   // or vanish
+        } else if (best._el) {                             // alive: flash white to show the hit
+          best._el.style.filter = "brightness(2.4)";
+          setTimeout(() => { if (best._el) best._el.style.filter = ""; }, 70);
         }
         if (hitmark) {                                     // hit feedback flash
           hitmark.style.opacity = "1";
@@ -875,7 +882,6 @@
       stone: "walls/000.png", crackstone: "walls/002.png", steel: "walls/012.png",
       wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
       moss:  "walls/030.png", cave:  "walls/032.png",
-      guard: "enemies/guard.png",
     };
     const loadingTex = new Set();
     map.on("styleimagemissing", (e) => {
