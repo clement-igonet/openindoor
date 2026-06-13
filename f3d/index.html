@@ -12,7 +12,7 @@
     .maplibregl-ctrl-attrib, .maplibregl-ctrl-logo { opacity: .25; }
 
     #hud {
-      position: absolute; inset: 0; pointer-events: none;
+      position: absolute; inset: 0; pointer-events: none; z-index: 2;  /* above #sprites (z-index:1) so the gun/crosshair draw over enemies */
       font-family: "Courier New", monospace; color: #ffd23f;
       text-shadow: 0 0 4px #000, 2px 2px 0 #000;
     }
