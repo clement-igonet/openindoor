@@ -63,6 +63,9 @@
 </head>
 <body>
   <div id="map"></div>
+  <!-- Enemies are DOM <img> overlays positioned from map.project() every frame
+       (see updateSprites). Sits above the WebGL map, below the HUD/gun. -->
+  <div id="sprites" style="position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:1;"></div>
 
   <div id="hud">
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
@@ -151,7 +154,7 @@
       ".........#y...#..#.#.......B....B...B....B.....................",
       "..........##.....###.......B......s......B.....................",
       "............#g####.........B....B...B....B.....................",
-      "............#..#...........B....B.g.B....B.....................",
+      "............#..#...........B....BgggB....B.....................",
       "............#..#...........BBBBBB...BBBBBB.....................",
       "............####...........B....B...B....B.....................",
       "...........................B.*...........B....................",
@@ -198,7 +201,6 @@
                            // aim fix is sizing the enemy sprite correctly; see GH below.)
     const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
-    const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
@@ -250,18 +252,15 @@
       (location.search.match(/diff=(\w+)/) || [])[1]
     ] ?? 2;
     const TYPES = {        // h = figure height in metres (player eye ≈ 1.75)
-      guard:   { hp: [25, 25, 25, 25],       h: 1.8 },
-      trooper: { hp: [100, 100, 100, 100],   h: 1.85 },
+      guard:   { hp: [25, 25, 25, 25],       h: 1.75 },
+      trooper: { hp: [100, 100, 100, 100],   h: 1.8 },
       hound:   { hp: [1, 1, 1, 1],           h: 1.0 },
-      officer: { hp: [50, 50, 50, 50],       h: 1.8 },
+      officer: { hp: [50, 50, 50, 50],       h: 1.85 },
       brute:   { hp: [45, 55, 55, 65],       h: 2.3 },
       boss:    { hp: [850, 950, 1050, 1200], h: 2.9 },
     };
-    // Cropped guard sprite is 44×106 px (figure fills it). Size it so its on-screen
-    // height equals the type's height in metres at the current distance.
-    const GW = 44, GH = 106;
-    const enemyIconSize = (e, dist) =>
-      Math.min(8, (TYPES[e.type].h * 1.5 * (window.innerHeight || 800)) / (Math.max(1.2, dist) * GH));
+    // Cropped guard sprite is 44×106 px (the figure fills the frame).
+    const GW = 44, GH = 106, ASPECT = GW / GH;
     // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
     for (let r = 0; r < ROWS; r++) {
@@ -270,22 +269,58 @@
         if (type) enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, type, hp: TYPES[type].hp[DIFF], alive: true });
       }
     }
-    // Enemies as billboard sprites (the original guard art). MapLibre symbols
-    // can't depth-test against the 3D walls, so we cull by line-of-sight (to
-    // hide enemies in other rooms) and scale by distance for pseudo-perspective.
-    const enemiesGeoJSON = () => {
-      return {
-        type: "FeatureCollection",
-        features: enemies.filter((e) => e.alive)
-          .map((e) => ({ e, dist: Math.hypot(e.x - player.x, e.y - player.y) }))
-          .filter((o) => o.dist < 46 && hasLineOfSight(player.x, player.y, o.e.x, o.e.y))
-          .map(({ e, dist }) => ({
-            type: "Feature",
-            properties: { size: enemyIconSize(e, dist) },
-            geometry: { type: "Point", coordinates: toLngLat(e.x, e.y) },
-          })),
-      };
-    };
+    // Enemies are billboard <img> overlays, NOT MapLibre symbols. MapLibre's
+    // icon-size renders at a scale we can't reconcile with metres, so a guard
+    // came out ~3-4× too tall and the hit-box never matched the drawn figure.
+    // Instead we size each sprite straight from map.project(): on-screen height
+    // = figureHeight(m) × pixels-per-metre measured AT the enemy. That ties the
+    // sprite to the exact same screen geometry as the walls, so a 1.75 m guard
+    // is precisely 1.75/3 the height of a co-located 3 m wall, his feet sit on
+    // the floor, his head lands on the horizon (eye level) — and the very same
+    // rectangle is reused for hit detection.
+    const spriteLayer = document.getElementById("sprites");
+
+    // Returns the enemy's drawn rectangle in CSS px {x,y,w,h,dist}, or null if
+    // it must not be shown (too far, behind us, or hidden behind a wall).
+    function spriteRect(e) {
+      const dx = e.x - player.x, dy = e.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.001 || dist > 46) return null;
+      const ad = Math.atan2(dy, dx) - player.heading;                 // skip behind us
+      if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) return null;
+      if (!hasLineOfSight(player.x, player.y, e.x, e.y)) return null;
+      const feet = map.project(toLngLat(e.x, e.y));                   // floor point, CSS px
+      // pixels-per-metre at the enemy: project a point 1 m to the side and
+      // measure the screen distance (vertical scale ≈ horizontal at this depth).
+      const sx = -dy / dist, sy = dx / dist;                          // unit ⟂ (ground)
+      const side = map.project(toLngLat(e.x + sx, e.y + sy));
+      const pxPerM = Math.hypot(side.x - feet.x, side.y - feet.y);
+      if (!isFinite(pxPerM) || pxPerM <= 0) return null;
+      const h = pxPerM * TYPES[e.type].h, w = h * ASPECT;
+      return { x: feet.x - w / 2, y: feet.y - h, w, h, dist };
+    }
+
+    // Reposition / resize / depth-sort every enemy's <img> each frame.
+    function updateSprites() {
+      for (const e of enemies) {
+        if (!e._el) {
+          const img = document.createElement("img");
+          img.src = "enemies/guard.png"; img.alt = "";
+          img.style.cssText = "position:absolute;image-rendering:pixelated;display:none;";
+          spriteLayer.appendChild(img);
+          e._el = img;
+        }
+        const el = e._el;
+        const r = e.alive ? spriteRect(e) : null;
+        if (!r) { el.style.display = "none"; continue; }
+        el.style.display = "block";
+        el.style.left = r.x.toFixed(1) + "px";
+        el.style.top = r.y.toFixed(1) + "px";
+        el.style.width = r.w.toFixed(1) + "px";
+        el.style.height = r.h.toFixed(1) + "px";
+        el.style.zIndex = Math.max(0, Math.round(100000 - r.dist * 100)); // nearer on top
+      }
+    }
 
     // ---------------------------------------------------------------------
     // Player state (metres + heading in radians; 0 = +x / east).
@@ -342,7 +377,6 @@
         sources: {
           walls: { type: "geojson", data: wallsGeoJSON },
           floor: { type: "geojson", data: floorGeoJSON },
-          enemies: { type: "geojson", data: enemiesGeoJSON() },
         },
         layers: [
           { id: "sky", type: "background", paint: { "background-color": "#20232e" } },
@@ -356,6 +390,16 @@
               "fill-extrusion-vertical-gradient": true,
             },
           },
+          // VALIDATION RULERS: thin bands wrapping the walls at exactly 1 m (red)
+          // and 2 m (cyan) so wall-texture scale and sprite heights can be checked.
+          {
+            id: "ruler1m", type: "fill-extrusion", source: "walls",
+            paint: { "fill-extrusion-color": "#ff3b3b", "fill-extrusion-base": 0.97, "fill-extrusion-height": 1.03 },
+          },
+          {
+            id: "ruler2m", type: "fill-extrusion", source: "walls",
+            paint: { "fill-extrusion-color": "#28e0e0", "fill-extrusion-base": 1.97, "fill-extrusion-height": 2.03 },
+          },
           {
             id: "ceiling", type: "fill-extrusion", source: "floor",
             paint: {
@@ -364,18 +408,7 @@
               "fill-extrusion-height": WALL_H + 0.4,
             },
           },
-          {
-            id: "enemies", type: "symbol", source: "enemies",
-            layout: {
-              "icon-image": "guard",
-              "icon-size": ["get", "size"],
-              "icon-anchor": "bottom",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-              "icon-pitch-alignment": "viewport",
-              "icon-rotation-alignment": "viewport",
-            },
-          },
+          // Enemies are drawn as DOM overlays (see updateSprites), not a layer.
         ],
       },
     });
@@ -429,42 +462,26 @@
         weaponImg.src = "weapon/bereta_04.png";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
-      // Pixel-precise hit: project each enemy's drawn sprite rectangle to the
-      // screen and test whether the crosshair (screen centre) lands on it.
+      // Pixel-precise hit: the crosshair (screen centre) must land inside the
+      // enemy's drawn rectangle — the SAME spriteRect used to draw it, so what
+      // you see is exactly what you can hit. Nearest visible enemy wins.
       const cv = map.getCanvas();
       const ccx = cv.clientWidth / 2, ccy = cv.clientHeight / 2;     // crosshair pixel
-      const Hpx = window.innerHeight || 800;
       let best = null, bestDist = 1e9, near = null, nearD = 1e9, nearOn = false;
       for (const e of enemies) {
         if (!e.alive) continue;
-        const dx = e.x - player.x, dy = e.y - player.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 0.01) continue;
-        const ad = Math.atan2(dy, dx) - player.heading;              // skip enemies behind us
-        if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) continue;
-        // sprite rectangle on screen (same size formula as enemiesGeoJSON).
-        // The cropped sprite fills its frame and is anchored bottom-centre at
-        // the feet, so the rect is symmetric around p.x.
-        const p = map.project(toLngLat(e.x, e.y));                   // feet, screen px
-        const sz = enemyIconSize(e, dist);
-        const wpx = GW * sz, hpx = GH * sz;
-        const on = ccx >= p.x - wpx / 2 && ccx <= p.x + wpx / 2 &&
-                   ccy >= p.y - hpx && ccy <= p.y;
-        if (dist < nearD) { nearD = dist; near = e; nearOn = on; }
-        if (!on || dist >= bestDist) continue;
-        if (!hasLineOfSight(player.x, player.y, e.x, e.y)) continue;
-        bestDist = dist; best = e;
+        const r = spriteRect(e);                                     // null if hidden
+        if (!r) continue;
+        const on = ccx >= r.x && ccx <= r.x + r.w && ccy >= r.y && ccy <= r.y + r.h;
+        if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
+        if (on && r.dist < bestDist) { bestDist = r.dist; best = e; }
       }
       aim = best ? `HIT ${best.type} hp${Math.max(0, best.hp - SHOT_DMG)}`
                  : (near ? `MISS ${near.type} d${nearD.toFixed(1)} ${nearOn ? "on" : "off"}` : "no enemy");
       if (best) {
         best.hp -= SHOT_DMG;
-        if (best.hp <= 0) {                                // kill + remove FIRST
-          best.alive = false;
-          const s = map.getSource("enemies");
-          if (s) s.setData(enemiesGeoJSON());
-        }
-        if (hitmark) {                                     // then feedback
+        if (best.hp <= 0) { best.alive = false; if (best._el) best._el.style.display = "none"; }
+        if (hitmark) {                                     // hit feedback flash
           hitmark.style.opacity = "1";
           setTimeout(() => { hitmark.style.opacity = "0"; }, 110);
         }
@@ -482,19 +499,17 @@
     // along the heading; turning rotates the look point around the fixed eye.
     //   bearing = compass dir of forward = atan2(east, north) = atan2(cos h, sin h)
     // ---------------------------------------------------------------------
-    const PR = PITCH * Math.PI / 180;
     let lastError = "";
     function updateCamera() {
       try {
-        const H = map.getCanvas().clientHeight || 800;
-        const D = EYE_H / Math.cos(PR);            // eye→center distance (m)
-        const mpp = D / (1.5 * H);                 // metres/pixel (fov ≈ 36.9° → 1.5·H px)
-        const zoom = Math.log2(EARTH / (512 * mpp));
-        const off = D * Math.sin(PR);              // place center this far ahead (m)
-        const cx = player.x + Math.cos(player.heading) * off;
-        const cy = player.y + Math.sin(player.heading) * off;
+        // Native camera solver: hand MapLibre the eye's lng/lat + altitude (EYE_H)
+        // + orientation and let it compute center / zoom / elevation. No hand-rolled
+        // zoom math, so wall-texture scale no longer rides on a derived zoom, and
+        // PITCH can approach 90 without the old EYE_H/cos(PITCH) divide-by-zero.
         const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
-        map.jumpTo({ center: toLngLat(cx, cy), bearing, pitch: PITCH, zoom });
+        const opts = map.calculateCameraOptionsFromCameraLngLatAltRotation(
+          toLngLat(player.x, player.y), EYE_H, bearing, PITCH, 0);
+        map.jumpTo(opts);
       } catch (err) {
         lastError = String(err && err.message || err);
       }
@@ -561,6 +576,19 @@
       mctx.beginPath();
       mctx.arc(px, py, 2.5, 0, Math.PI * 2);
       mctx.fill();
+
+      // Distance legend: a 10 m scale bar with end ticks (bottom-left corner).
+      const barM = 10, barPx = barM * (MCELL / CELL);
+      const bx = 5, by = H - 6;
+      mctx.strokeStyle = "#ffd23f"; mctx.lineWidth = 1.5;
+      mctx.beginPath();
+      mctx.moveTo(bx, by);            mctx.lineTo(bx + barPx, by);       // bar
+      mctx.moveTo(bx, by - 3);        mctx.lineTo(bx, by + 3);           // left tick
+      mctx.moveTo(bx + barPx, by - 3);mctx.lineTo(bx + barPx, by + 3);   // right tick
+      mctx.stroke();
+      mctx.fillStyle = "#ffd23f";
+      mctx.font = "10px monospace"; mctx.textBaseline = "bottom";
+      mctx.fillText(barM + " m", bx + 2, by - 4);
     }
 
     // Map toggle (M key / MAP button) — hidden by default on small screens.
@@ -623,10 +651,7 @@
 
         updateCamera();
         drawMinimap();
-        if (ticks % 4 === 0) {                       // refresh enemy LOS/size
-          const es = map.getSource("enemies");
-          if (es) es.setData(enemiesGeoJSON());
-        }
+        updateSprites();                             // position/size enemy <img>s
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
@@ -716,7 +741,10 @@
         .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
     });
 
-    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); } catch (_) {} });
+    // setCenterClampedToGround(false): the camera solver returns a center
+    // *elevation*; with clamping on (default) MapLibre snaps center to the ground
+    // and ignores our EYE_H. Off → the eye altitude is honored.
+    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); map.setCenterClampedToGround(false); } catch (_) {} });
     requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
 
     // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
