@@ -71,24 +71,26 @@
     // ---------------------------------------------------------------------
     // The level. '#' = wall, '.' = open, 'S' = player start.
     // ---------------------------------------------------------------------
-    const MAZE = [
-      "################",
-      "#..............#",
-      "#..####..####..#",
-      "#..#........#..#",
-      "#..#..####..#..#",
-      "#.....#..#.....#",
-      "#..#..#S.#..#..#",
-      "#..#..#..#..#..#",
-      "#..#..####..#..#",
-      "#..#........#..#",
-      "#..#..####..#..#",
-      "#.....#..#.....#",
-      "#..#..#..#..#..#",
-      "#..#........#..#",
-      "#..............#",
-      "################",
-    ];
+    // A larger, original "rooms + doorways" level, generated deterministically.
+    // Every room is open and connected to its right/bottom neighbour, so the
+    // player can always move and is never boxed in. (This is our own layout —
+    // the original game's maps are copyrighted, so they are not reproduced.)
+    const MAZE = (() => {
+      const RC = 4, CC = 5, RW = 4, RH = 4;        // 4×5 rooms, each 4×4, 1-thick walls
+      const R = 1 + RC * (RH + 1);
+      const C = 1 + CC * (RW + 1);
+      const g = Array.from({ length: R }, () => Array(C).fill("#"));
+      for (let rr = 0; rr < RC; rr++) {
+        for (let cc = 0; cc < CC; cc++) {
+          const r0 = 1 + rr * (RH + 1), c0 = 1 + cc * (RW + 1);
+          for (let r = 0; r < RH; r++)
+            for (let c = 0; c < RW; c++) g[r0 + r][c0 + c] = ".";
+          if (cc < CC - 1) g[r0 + 1 + (rr % RH)][c0 + RW] = ".";   // door → right
+          if (rr < RC - 1) g[r0 + RH][c0 + 1 + (cc % RW)] = ".";   // door → below
+        }
+      }
+      return g.map((row) => row.join(""));
+    })();
     const ROWS = MAZE.length;
     const COLS = MAZE[0].length;
 
@@ -111,7 +113,7 @@
 
     // Build wall polygons + find the start cell.
     const wallFeatures = [];
-    let start = { r: 1, c: 1 };
+    let start = { r: 8, c: 8 };   // a central room (generated map has no 'S')
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const ch = MAZE[r][c];
