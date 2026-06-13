@@ -72,30 +72,39 @@
   <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
   <script>
     // ---------------------------------------------------------------------
-    // The level. '#' = wall, '.' = open, 'S' = player start.
+    // The level is plain ASCII — edit LEVEL to design maps by hand.
+    //   '.' / ' ' = floor          '@' = player start
+    //   walls (by texture):  # stone   K crackstone   B steel   W wood
+    //                        R brick   P purple        M moss    C cave
+    //   enemies:  g guard   s trooper   o officer   d hound   z brute   X boss
     // ---------------------------------------------------------------------
-    // A larger, original "rooms + doorways" level, generated deterministically.
-    // Every room is open and connected to its right/bottom neighbour, so the
-    // player can always move and is never boxed in. (This is our own layout —
-    // the original game's maps are copyrighted, so they are not reproduced.)
-    const MAZE = (() => {
-      const RC = 4, CC = 5, RW = 4, RH = 4;        // 4×5 rooms, each 4×4, 1-thick walls
-      const R = 1 + RC * (RH + 1);
-      const C = 1 + CC * (RW + 1);
-      const g = Array.from({ length: R }, () => Array(C).fill("#"));
-      for (let rr = 0; rr < RC; rr++) {
-        for (let cc = 0; cc < CC; cc++) {
-          const r0 = 1 + rr * (RH + 1), c0 = 1 + cc * (RW + 1);
-          for (let r = 0; r < RH; r++)
-            for (let c = 0; c < RW; c++) g[r0 + r][c0 + c] = ".";
-          if (cc < CC - 1) g[r0 + 1 + (rr % RH)][c0 + RW] = ".";   // door → right
-          if (rr < RC - 1) g[r0 + RH][c0 + 1 + (cc % RW)] = ".";   // door → below
-        }
-      }
-      return g.map((row) => row.join(""));
-    })();
-    const ROWS = MAZE.length;
-    const COLS = MAZE[0].length;
+    const WALL_TEX = {
+      "#": "stone", "K": "crackstone", "B": "steel", "W": "wood",
+      "R": "brick", "P": "purple", "M": "moss", "C": "cave",
+    };
+    const ACTOR = { g: "guard", s: "trooper", o: "officer", d: "hound", z: "brute", X: "boss" };
+
+    const LEVEL = [
+      "######RRRRRRBBBBBBWWWWWWW",
+      "#.......................W",
+      "#.@...R..g..B..s..W..o..W",
+      "#.....R...g.B...g.W...g.W",
+      "#.....R.....B.....W.....W",
+      "M.MMMMPP.PPP###.##RRRR.RR",
+      "M.....P.....#.....R.....R",
+      "M..d.....z.....g.....s..R",
+      "M...g.P...g.#...g.R...g.R",
+      "M.....P.....#.....R.....R",
+      "B.BBBBWW.WWWMMM.MMPPPP.PP",
+      "B.....W.....M.....P.....P",
+      "B..o..W..d..M..z..P..g..P",
+      "B...g.....g.....g....Xg.P",
+      "B.....W.....M.....P.....P",
+      "BBBBBBWWWWWWMMMMMMPPPPPPP",
+    ];
+    const ROWS = LEVEL.length;
+    const COLS = Math.max(...LEVEL.map((row) => row.length));
+    const at = (r, c) => (LEVEL[r] && LEVEL[r][c]) || " ";
 
     // ---------------------------------------------------------------------
     // World scale. We lay the grid out in metres near the equator/prime
@@ -110,23 +119,18 @@
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
-    // Each wall cell gets one of a few procedural stone/brick textures, drawn
-    // at runtime (see makeTexture + the styleimagemissing handler). Original art.
-    const TEXES = ["stone", "crackstone", "steel", "wood", "brick", "purple", "moss", "cave"];
-    const texFor = (r, c) => TEXES[(r * 3 + c * 7) % TEXES.length];
-
-    // Build wall polygons + find the start cell.
+    // Build wall polygons + find the start cell from the ASCII level.
     const wallFeatures = [];
-    let start = { r: 8, c: 8 };   // a central room (generated map has no 'S')
+    let start = null;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        const ch = MAZE[r][c];
-        if (ch === "S") start = { r, c };
-        if (ch !== "#") continue;
+        const ch = at(r, c);
+        if (ch === "@") start = { r, c };
+        if (!(ch in WALL_TEX)) continue;
         const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
         wallFeatures.push({
           type: "Feature",
-          properties: { tex: texFor(r, c) },
+          properties: { tex: WALL_TEX[ch] },
           geometry: { type: "Polygon", coordinates: [[
             toLngLat(x0, y0), toLngLat(x1, y0),
             toLngLat(x1, y1), toLngLat(x0, y1), toLngLat(x0, y0),
@@ -134,6 +138,7 @@
         });
       }
     }
+    if (!start) start = { r: 1, c: 1 };
     const wallsGeoJSON = { type: "FeatureCollection", features: wallFeatures };
 
     // Floor: one polygon covering the whole grid.
@@ -159,26 +164,13 @@
       brute:   { hp: [45, 55, 55, 65],       color: "#7a3b2e", head: "#caa07a", body: 2.6, w: 1.1 },
       boss:    { hp: [850, 950, 1050, 1200], color: "#2a2a30", head: "#b08060", body: 3.0, w: 1.4 },
     };
-    const ROSTER = ["guard", "guard", "officer", "hound", "trooper", "guard", "brute", "officer"];
+    // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
-    let ei = 0;
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        if (MAZE[r][c] !== "#" && r % 5 === 3 && c % 5 === 3 && !(r === start.r && c === start.c)) {
-          const type = ROSTER[ei++ % ROSTER.length];
-          enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, type, hp: TYPES[type].hp[DIFF], alive: true });
-        }
+        const type = ACTOR[at(r, c)];
+        if (type) enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, type, hp: TYPES[type].hp[DIFF], alive: true });
       }
-    }
-    // Promote the enemy farthest from the start to a boss.
-    if (enemies.length) {
-      const sx = (start.c + 0.5) * CELL, sy = (start.r + 0.5) * CELL;
-      let far = enemies[0], fd = -1;
-      for (const e of enemies) {
-        const d = Math.hypot(e.x - sx, e.y - sy);
-        if (d > fd) { fd = d; far = e; }
-      }
-      far.type = "boss"; far.hp = TYPES.boss.hp[DIFF];
     }
     // Enemies as billboard sprites (the original guard art). MapLibre symbols
     // can't depth-test against the 3D walls, so we cull by line-of-sight (to
@@ -214,7 +206,7 @@
     const isWall = (x, y) => {
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
       if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
-      return MAZE[r][c] === "#";
+      return at(r, c) in WALL_TEX;
     };
 
     // Is the straight line between two points clear of walls? Grid DDA
@@ -234,7 +226,7 @@
         else { cy += stepY; tMaxY += tDeltaY; }
         if (cx === ex && cy === ey) return true;        // reached target cell
         if (cy < 0 || cy >= ROWS || cx < 0 || cx >= COLS) return false;
-        if (MAZE[cy][cx] === "#") return false;          // wall in between
+        if (at(cy, cx) in WALL_TEX) return false;        // wall in between
       }
       return true;
     };
@@ -412,7 +404,7 @@
       mctx.clearRect(0, 0, mini.width, mini.height);
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-          mctx.fillStyle = MAZE[r][c] === "#" ? "#8a8a8a" : "#1d1d22";
+          mctx.fillStyle = (at(r, c) in WALL_TEX) ? "#8a8a8a" : "#1d1d22";
           mctx.fillRect(c * MCELL, r * MCELL, MCELL - 1, MCELL - 1);
         }
       }
