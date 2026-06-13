@@ -264,8 +264,34 @@
       brute:   { hp: [45, 55, 55, 65],       h: 2.10 },
       boss:    { hp: [850, 950, 1050, 1200], h: 2.20 },
     };
-    // Cropped guard sprite is 44×106 px (the figure fills the frame).
-    const GW = 44, GH = 106, ASPECT = GW / GH;
+    // ---------------------------------------------------------------------
+    // Sprite atlas config. Enemies are drawn by cropping ONE frame out of a
+    // sprite sheet (via CSS background-position), so the same engine handles a
+    // single image OR a full directional + animated sheet — just edit SPRITE.
+    //
+    // The sheet is a grid of `cols × rows` frames, each `fw × fh` px. A "pose"
+    // is one ROW; `dirs` columns of that row are the 8 viewing angles of the
+    // billboard (set dirs:1 for a non-directional image). `walkRows` are the
+    // rows that form the walk cycle; `deathFrames` is an [[col,row],…] sequence
+    // played once on death (last cell stays as the corpse). The current file is
+    // a single 44×106 frame placeholder — point `src` at a real sheet and set
+    // cols/rows/fw/fh/dirs/walkRows/deathFrames to light it all up.
+    // ---------------------------------------------------------------------
+    const SPRITE = {
+      src: "enemies/guard.png",
+      cols: 1, rows: 1,          // sheet grid
+      fw: 44, fh: 106,           // one frame, px
+      dirs: 1,                   // viewing directions per pose (8 for a Wolf-style sheet)
+      standRow: 0,               // row shown when not moving
+      walkRows: [0],             // rows cycled while moving
+      walkFps: 6,
+      deathFrames: [],           // [[col,row],…] death sequence ([] → just vanish)
+      deathFps: 8,
+      // Order of the `dirs` columns, as the angle (deg) of the guard's facing
+      // relative to the viewer for each column (0 = facing the camera/front).
+      dirOffset: 0,
+    };
+    const ASPECT = SPRITE.fw / SPRITE.fh;
     const SIGHT = 52;   // metres: draw / allow hitting enemies out to here
     // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
@@ -315,25 +341,54 @@
       return { x: feet.x - w / 2, y: topY, w, h, dist };
     }
 
-    // Reposition / resize / depth-sort every enemy's <img> each frame.
-    function updateSprites() {
+    // Which atlas cell {col,row} to show for an enemy right now: viewing-angle
+    // column (8-dir billboard) + walk-cycle / death-sequence row.
+    function spriteFrame(e, now) {
+      if (e.dead && SPRITE.deathFrames.length) {            // play the death sequence
+        const i = Math.floor((now - e.deadAt) / 1000 * SPRITE.deathFps);
+        const cell = SPRITE.deathFrames[Math.min(i, SPRITE.deathFrames.length - 1)];
+        return { col: cell[0], row: cell[1] };
+      }
+      let col = 0;
+      if (SPRITE.dirs > 1) {                                // facing relative to the viewer
+        const toCam = Math.atan2(player.y - e.y, player.x - e.x);
+        let rel = e.dir - toCam + SPRITE.dirOffset * Math.PI / 180;
+        rel = (rel % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+        col = Math.round(rel / (Math.PI * 2) * SPRITE.dirs) % SPRITE.dirs;
+      }
+      let row = SPRITE.standRow;
+      if (e.state === "chase" || e.state === "patrol") {    // walk animation while moving
+        const wr = SPRITE.walkRows;
+        row = wr[Math.floor(now / 1000 * SPRITE.walkFps) % wr.length];
+      }
+      return { col, row };
+    }
+
+    // Reposition / resize / animate / depth-sort every enemy's sprite each frame.
+    function updateSprites(now) {
       const ccy = (map.getCanvas().clientHeight || 800) / 2;
       for (const e of enemies) {
         if (!e._el) {
-          const img = document.createElement("img");
-          img.src = "enemies/guard.png"; img.alt = "";
-          img.style.cssText = "position:absolute;image-rendering:pixelated;display:none;";
-          spriteLayer.appendChild(img);
-          e._el = img;
+          const el = document.createElement("div");
+          el.style.cssText = "position:absolute;background-repeat:no-repeat;" +
+            "image-rendering:pixelated;display:none;background-image:url('" + SPRITE.src + "');";
+          spriteLayer.appendChild(el);
+          e._el = el;
         }
         const el = e._el;
-        const r = e.alive ? spriteRect(e, ccy) : null;
+        // A corpse (dead) still draws its last death frame; a fully-gone enemy hides.
+        const show = e.alive || (e.dead && SPRITE.deathFrames.length);
+        const r = show ? spriteRect(e, ccy) : null;
         if (!r) { el.style.display = "none"; continue; }
+        const f = spriteFrame(e, now);
         el.style.display = "block";
         el.style.left = r.x.toFixed(1) + "px";
         el.style.top = r.y.toFixed(1) + "px";
         el.style.width = r.w.toFixed(1) + "px";
         el.style.height = r.h.toFixed(1) + "px";
+        // Crop one frame: scale the whole sheet so a cell == (w × h), then offset.
+        el.style.backgroundSize = (SPRITE.cols * r.w).toFixed(1) + "px " + (SPRITE.rows * r.h).toFixed(1) + "px";
+        el.style.backgroundPosition = (-f.col * r.w).toFixed(1) + "px " + (-f.row * r.h).toFixed(1) + "px";
         el.style.zIndex = Math.max(0, Math.round(100000 - r.dist * 100)); // nearer on top
       }
     }
@@ -514,7 +569,11 @@
                  : (near ? `MISS ${near.type} d${nearD.toFixed(1)} ${nearOn ? "on" : "off"}` : "no enemy");
       if (best) {
         best.hp -= SHOT_DMG;
-        if (best.hp <= 0) { best.alive = false; if (best._el) best._el.style.display = "none"; }
+        if (best.hp <= 0) {
+          best.alive = false;                              // no longer targetable / blocking
+          if (SPRITE.deathFrames.length) { best.dead = true; best.deadAt = performance.now(); } // play death
+          else if (best._el) best._el.style.display = "none";                                   // or vanish
+        }
         if (hitmark) {                                     // hit feedback flash
           hitmark.style.opacity = "1";
           setTimeout(() => { hitmark.style.opacity = "0"; }, 110);
@@ -739,7 +798,7 @@
         updateAI(dt);                                // guards patrol / chase
         updateCamera();
         drawMinimap();
-        updateSprites();                             // position/size enemy <img>s
+        updateSprites(t);                            // position/size/animate enemy sprites
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
