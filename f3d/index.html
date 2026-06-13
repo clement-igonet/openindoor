@@ -191,7 +191,9 @@
     const CELL   = 4;     // metres per grid cell
     const WALL_H = 4;     // wall height (metres) — cube walls (height ≈ cell width)
     const EYE_H  = 2.2;   // eye height (metres) — human eye, below the wall top
-    const PITCH  = 85;    // camera pitch (deg from nadir); 85 ≈ near-horizontal, = maxPitch
+    const PITCH     = 89;  // camera pitch (deg). ~90 = horizontal; at exactly 90 the eye
+                           // drops to the floor (altitude = cos(pitch)·dist = 0), so 89.
+    const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
     const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
 
@@ -326,8 +328,8 @@
     const map = new maplibregl.Map({
       container: "map",
       interactive: false,          // we drive the camera ourselves
-      maxPitch: 85,                // MapLibre's hard ceiling; 85° ≈ near-horizontal
-      pitch: 85,
+      maxPitch: MAX_PITCH,
+      pitch: PITCH,
       bearing: 0,
       center: toLngLat(player.x, player.y),
       zoom: 20,
@@ -712,7 +714,7 @@
         .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
     });
 
-    map.on("load", () => { try { map.setMaxPitch(85); } catch (_) {} });
+    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); } catch (_) {} });
     requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
 
     // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
