@@ -425,36 +425,34 @@
         weaponImg.src = "weapon/bereta_04.png";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
-      // Hit only the nearest enemy the crosshair is actually ON: the angular
-      // offset must fall within the enemy's own angular half-width (which grows
-      // as it gets closer / bigger on screen). No wide "cone".
-      let best = null, bestDist = 1e9, near = null, nearD = 1e9;
+      // Pixel-precise hit: project each enemy's drawn sprite rectangle to the
+      // screen and test whether the crosshair (screen centre) lands on it.
+      const cv = map.getCanvas();
+      const ccx = cv.clientWidth / 2, ccy = cv.clientHeight / 2;     // crosshair pixel
+      const Hpx = window.innerHeight || 800;
+      let best = null, bestDist = 1e9, near = null, nearD = 1e9, nearOn = false;
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.x - player.x, dy = e.y - player.y;
         const dist = Math.hypot(dx, dy);
         if (dist < 0.01) continue;
-        if (dist < nearD) { nearD = dist; near = { e, dx, dy, dist }; }
-        if (dist >= bestDist) continue;
-        const ang = Math.atan2(dy, dx);
-        const d = ang - player.heading;                    // robust angle diff in [0, π]
-        const off = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
-        const half = Math.max(0.38, Math.atan2(TYPES[e.type].w * 1.5, dist)); // forgiving aim
-        if (off > half) continue;                          // not roughly under the crosshair
-        const nx = (-dy / dist) * TYPES[e.type].w, ny = (dx / dist) * TYPES[e.type].w;
-        if (hasLineOfSight(player.x, player.y, e.x, e.y) ||
-            hasLineOfSight(player.x, player.y, e.x + nx, e.y + ny) ||
-            hasLineOfSight(player.x, player.y, e.x - nx, e.y - ny)) {
-          bestDist = dist; best = e;
-        }
+        const ad = Math.atan2(dy, dx) - player.heading;              // skip enemies behind us
+        if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) continue;
+        // sprite rectangle on screen (same size formula as enemiesGeoJSON)
+        const p = map.project(toLngLat(e.x, e.y));                   // feet, screen px
+        const sz = Math.min(9, (2.8 * 1.5 * Hpx) / (128 * Math.max(1.5, dist))) * (TYPES[e.type].w / 0.8);
+        // guard figure occupies frame px (16,22)-(60,128) of 128; the frame's
+        // bottom-centre (64,128) is anchored at the feet (p), so map those bounds:
+        const wpx = 128 * sz;
+        const on = ccx >= p.x - 0.375 * wpx && ccx <= p.x - 0.031 * wpx &&
+                   ccy >= p.y - 0.828 * wpx && ccy <= p.y;
+        if (dist < nearD) { nearD = dist; near = e; nearOn = on; }
+        if (!on || dist >= bestDist) continue;
+        if (!hasLineOfSight(player.x, player.y, e.x, e.y)) continue;
+        bestDist = dist; best = e;
       }
-      if (near) {                                          // HUD diagnostic
-        const a = Math.atan2(near.dy, near.dx) - player.heading;
-        const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * 57.3;
-        const half = Math.max(0.38, Math.atan2(TYPES[near.e.type].w * 1.5, near.dist)) * 57.3;
-        const los = hasLineOfSight(player.x, player.y, near.e.x, near.e.y) ? 1 : 0;
-        aim = (best ? "HIT" : "MISS") + ` ${near.e.type} d${near.dist.toFixed(1)} off${off.toFixed(0)}/${half.toFixed(0)} los${los}`;
-      } else aim = "no enemy";
+      aim = best ? `HIT ${best.type} hp${Math.max(0, best.hp - SHOT_DMG)}`
+                 : (near ? `MISS ${near.type} d${nearD.toFixed(1)} ${nearOn ? "on" : "off"}` : "no enemy");
       if (best) {
         best.hp -= SHOT_DMG;
         if (best.hp <= 0) {                                // kill + remove FIRST
