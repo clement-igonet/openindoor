@@ -534,7 +534,12 @@
       try {
         const H = map.getCanvas().clientHeight || 800;
         const mpp = EARTH / (512 * Math.pow(2, ZOOM));   // metres per pixel (lat ≈ 0)
-        const dWorld = 1.5 * H * mpp;                    // eye→centre distance (m)
+        // Use MapLibre's ACTUAL focal length (cameraToCenterDistance, px) so the
+        // eye lands exactly on the player — otherwise it drifts ahead and the
+        // camera noses into walls despite the player-radius collision.
+        const tr = map.transform;
+        const camPx = (tr && tr.cameraToCenterDistance) || 1.5 * H;
+        const dWorld = camPx * mpp;                      // eye→centre distance (m)
         const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
         const cx = player.x + Math.cos(player.heading) * dWorld;
         const cy = player.y + Math.sin(player.heading) * dWorld;
