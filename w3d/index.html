@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>W3D — Wolfenstein-style 3D · OpenIndoor</title>
+  <link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    #map { position: absolute; inset: 0; }
+    /* hide MapLibre's default UI — this is a game, not a map */
+    .maplibregl-ctrl-attrib, .maplibregl-ctrl-logo { opacity: .25; }
+
+    #hud {
+      position: absolute; inset: 0; pointer-events: none;
+      font-family: "Courier New", monospace; color: #ffd23f;
+      text-shadow: 0 0 4px #000, 2px 2px 0 #000;
+    }
+    /* crosshair */
+    #hud::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: 18px; height: 18px; margin: -9px 0 0 -9px;
+      background:
+        linear-gradient(#ffd23f,#ffd23f) center/2px 18px no-repeat,
+        linear-gradient(#ffd23f,#ffd23f) center/18px 2px no-repeat;
+      opacity: .8;
+    }
+    #controls {
+      position: absolute; left: 16px; bottom: 14px;
+      font-size: 13px; line-height: 1.5; letter-spacing: .04em;
+    }
+    #controls b { color: #fff; }
+
+    #overlay {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center;
+      background: rgba(8,6,2,.82); cursor: pointer; z-index: 10;
+      font-family: "Courier New", monospace; color: #ffd23f;
+    }
+    #overlay h1 { font-size: clamp(2rem, 6vw, 4rem); margin: 0 0 .2em; letter-spacing: .1em; text-shadow: 3px 3px 0 #7a1f1f; }
+    #overlay p { color: #e6d9b8; max-width: 540px; padding: 0 24px; line-height: 1.7; }
+    #overlay .play { margin-top: 24px; font-size: 1.3rem; color: #fff; animation: blink 1.1s steps(2,end) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    #overlay a { color: #ffd23f; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="hud">
+    <div id="controls">
+      <b>W A S D</b> move &nbsp;·&nbsp; <b>mouse</b> / <b>← →</b> turn &nbsp;·&nbsp; <b>Esc</b> release
+    </div>
+  </div>
+
+  <div id="overlay">
+    <h1>W3D</h1>
+    <p>A Wolfenstein-style first-person maze, rendered entirely with
+       <a href="https://maplibre.org/" target="_blank" rel="noopener">MapLibre GL</a>'s
+       3D extrusion engine and free camera. No raycaster — every wall is a real
+       georeferenced building.</p>
+    <p><b>W A S D</b> to move, <b>mouse</b> or <b>arrow keys</b> to turn.</p>
+    <div class="play">▶ Click to play</div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+  <script>
+    // ---------------------------------------------------------------------
+    // The level. '#' = wall, '.' = open, 'S' = player start.
+    // ---------------------------------------------------------------------
+    const MAZE = [
+      "################",
+      "#..............#",
+      "#..####..####..#",
+      "#..#........#..#",
+      "#..#..####..#..#",
+      "#.....#..#.....#",
+      "#..#..#S.#..#..#",
+      "#..#..#..#..#..#",
+      "#..#..####..#..#",
+      "#..#........#..#",
+      "#..#..####..#..#",
+      "#.....#..#.....#",
+      "#..#..#..#..#..#",
+      "#..#........#..#",
+      "#..............#",
+      "################",
+    ];
+    const ROWS = MAZE.length;
+    const COLS = MAZE[0].length;
+
+    // ---------------------------------------------------------------------
+    // World scale. We lay the grid out in metres near the equator/prime
+    // meridian, then convert to lng/lat for MapLibre.
+    // ---------------------------------------------------------------------
+    const CELL   = 4;     // metres per grid cell
+    const WALL_H = 14;    // wall height (metres)
+    const EYE    = 4;     // camera/eye height (metres)
+    const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
+
+    const toLngLat = (x, y) => [x * DEG, y * DEG];
+
+    // Wolfenstein-ish wall palette, chosen per cell so corridors read clearly.
+    const PALETTE = ["#6b6b6b", "#8a8a8a", "#3b5a9b", "#7a3b2e", "#4a7a3b"];
+    const wallColor = (r, c) => PALETTE[(r * 3 + c * 7) % PALETTE.length];
+
+    // Build wall polygons + find the start cell.
+    const wallFeatures = [];
+    let start = { r: 1, c: 1 };
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const ch = MAZE[r][c];
+        if (ch === "S") start = { r, c };
+        if (ch !== "#") continue;
+        const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
+        wallFeatures.push({
+          type: "Feature",
+          properties: { color: wallColor(r, c) },
+          geometry: { type: "Polygon", coordinates: [[
+            toLngLat(x0, y0), toLngLat(x1, y0),
+            toLngLat(x1, y1), toLngLat(x0, y1), toLngLat(x0, y0),
+          ]] },
+        });
+      }
+    }
+    const wallsGeoJSON = { type: "FeatureCollection", features: wallFeatures };
+
+    // Floor: one polygon covering the whole grid.
+    const floorGeoJSON = {
+      type: "Feature", properties: {},
+      geometry: { type: "Polygon", coordinates: [[
+        toLngLat(0, 0), toLngLat(COLS * CELL, 0),
+        toLngLat(COLS * CELL, ROWS * CELL), toLngLat(0, ROWS * CELL), toLngLat(0, 0),
+      ]] },
+    };
+
+    // ---------------------------------------------------------------------
+    // Player state (metres + heading in radians; 0 = +x / east).
+    // ---------------------------------------------------------------------
+    const player = {
+      x: (start.c + 0.5) * CELL,
+      y: (start.r + 0.5) * CELL,
+      heading: 0,
+    };
+    const RADIUS = 1.2; // collision radius (metres)
+
+    const isWall = (x, y) => {
+      const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+      return MAZE[r][c] === "#";
+    };
+
+    // ---------------------------------------------------------------------
+    // Map / style.
+    // ---------------------------------------------------------------------
+    const map = new maplibregl.Map({
+      container: "map",
+      interactive: false,          // we drive the camera ourselves
+      maxPitch: 85,
+      center: toLngLat(player.x, player.y),
+      zoom: 20,
+      style: {
+        version: 8,
+        sources: {
+          walls: { type: "geojson", data: wallsGeoJSON },
+          floor: { type: "geojson", data: floorGeoJSON },
+        },
+        layers: [
+          { id: "sky", type: "background", paint: { "background-color": "#20232e" } },
+          { id: "floor", type: "fill", source: "floor", paint: { "fill-color": "#3c3c3c" } },
+          {
+            id: "walls", type: "fill-extrusion", source: "walls",
+            paint: {
+              "fill-extrusion-color": ["get", "color"],
+              "fill-extrusion-height": WALL_H,
+              "fill-extrusion-base": 0,
+              "fill-extrusion-vertical-gradient": true,
+            },
+          },
+        ],
+      },
+    });
+
+    // ---------------------------------------------------------------------
+    // Input.
+    // ---------------------------------------------------------------------
+    const keys = Object.create(null);
+    addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code.startsWith("Arrow")) e.preventDefault(); });
+    addEventListener("keyup",   (e) => { keys[e.code] = false; });
+
+    const overlay = document.getElementById("overlay");
+    const canvas = map.getCanvas();
+    overlay.addEventListener("click", () => { overlay.style.display = "none"; canvas.requestPointerLock(); });
+    canvas.addEventListener("click", () => { if (document.pointerLockElement !== canvas) canvas.requestPointerLock(); });
+
+    const MOUSE_SENS = 0.0022;
+    addEventListener("mousemove", (e) => {
+      if (document.pointerLockElement === canvas) player.heading -= e.movementX * MOUSE_SENS;
+    });
+
+    // ---------------------------------------------------------------------
+    // Camera: place the eye at the player, look down the heading toward a
+    // far point at eye level (≈ horizontal view).
+    // ---------------------------------------------------------------------
+    function updateCamera() {
+      const cam = map.getFreeCameraOptions();
+      cam.position = maplibregl.MercatorCoordinate.fromLngLat(toLngLat(player.x, player.y), EYE);
+      const fx = player.x + Math.cos(player.heading) * 1000;
+      const fy = player.y + Math.sin(player.heading) * 1000;
+      cam.lookAtPoint(toLngLat(fx, fy));
+      map.setFreeCameraOptions(cam);
+    }
+
+    // ---------------------------------------------------------------------
+    // Game loop.
+    // ---------------------------------------------------------------------
+    const MOVE = 6;      // m/s
+    const TURN = 2.4;    // rad/s
+    let last = 0;
+
+    function tryStep(dx, dy) {
+      let nx = player.x + dx;
+      if (!isWall(nx + Math.sign(dx) * RADIUS, player.y)) player.x = nx;
+      let ny = player.y + dy;
+      if (!isWall(player.x, ny + Math.sign(dy) * RADIUS)) player.y = ny;
+    }
+
+    function frame(t) {
+      const dt = last ? Math.min(0.05, (t - last) / 1000) : 0;
+      last = t;
+
+      if (keys.ArrowLeft)  player.heading += TURN * dt;
+      if (keys.ArrowRight) player.heading -= TURN * dt;
+
+      const fwd = MOVE * dt;
+      const ch = Math.cos(player.heading), sh = Math.sin(player.heading);
+      let dx = 0, dy = 0;
+      if (keys.KeyW) { dx += ch * fwd; dy += sh * fwd; }
+      if (keys.KeyS) { dx -= ch * fwd; dy -= sh * fwd; }
+      if (keys.KeyA) { dx += -sh * fwd; dy += ch * fwd; }   // strafe left
+      if (keys.KeyD) { dx +=  sh * fwd; dy += -ch * fwd; }  // strafe right
+      if (dx || dy) tryStep(dx, dy);
+
+      updateCamera();
+      requestAnimationFrame(frame);
+    }
+
+    map.on("load", () => { updateCamera(); requestAnimationFrame(frame); });
+  </script>
+</body>
+</html>

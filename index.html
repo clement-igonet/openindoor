@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenIndoor · MapLibre demos</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --card-hover: #1f2630;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 600px at 50% -10%, #16203a 0%, var(--bg) 60%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 64px 24px 24px;
+      text-align: center;
+    }
+    h1 { font-size: 2.4rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    header p { color: var(--muted); font-size: 1.05rem; margin: 0 auto; max-width: 620px; line-height: 1.6; }
+    .grid {
+      max-width: 1000px;
+      margin: 24px auto 80px;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 18px;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      text-decoration: none;
+      color: inherit;
+      transition: transform .12s ease, background .12s ease, border-color .12s ease;
+      min-height: 150px;
+    }
+    .card.live:hover { transform: translateY(-3px); background: var(--card-hover); border-color: var(--accent); }
+    .card.soon { opacity: .55; cursor: default; }
+    .badge {
+      align-self: flex-start;
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 3px 8px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+    }
+    .badge.live { background: rgba(63,185,80,.15); color: #3fb950; }
+    .badge.soon { background: rgba(139,148,158,.15); color: var(--muted); }
+    .card h2 { font-size: 1.15rem; margin: 0 0 6px; }
+    .card p { margin: 0; color: var(--muted); font-size: .92rem; line-height: 1.5; }
+    .num { color: var(--muted); font-size: .8rem; margin-top: auto; padding-top: 14px; }
+    footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 0 24px 48px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenIndoor — MapLibre demos</h1>
+    <p>A collection of experiments pushing MapLibre GL beyond maps: 3D engines,
+       game mechanics, and indoor use cases. Pick a demo below.</p>
+  </header>
+
+  <main class="grid" id="grid"></main>
+
+  <footer>
+    Built with <a href="https://maplibre.org/" target="_blank" rel="noopener">MapLibre GL JS</a>
+    · <a href="https://github.com/clement-igonet/openindoor" target="_blank" rel="noopener">source on GitHub</a>
+  </footer>
+
+  <script>
+    // Demo registry. `path` is the URL segment (folder name). Set live:true to enable.
+    const demos = [
+      { n: 1, title: "Wolfenstein 3D", path: "w3d", live: true,
+        desc: "A first-person raycaster-style maze rendered with MapLibre's 3D extrusion engine. WASD + mouse to explore." },
+      { n: 2, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 3, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 4, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 5, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 6, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 7, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 8, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 9, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+      { n: 10, title: "Coming soon", path: null, live: false, desc: "Use case to be defined." },
+    ];
+
+    const grid = document.getElementById("grid");
+    for (const d of demos) {
+      const live = d.live && d.path;
+      const el = document.createElement(live ? "a" : "div");
+      el.className = "card " + (live ? "live" : "soon");
+      if (live) el.href = "./" + d.path + "/";
+      el.innerHTML =
+        '<span class="badge ' + (live ? "live" : "soon") + '">' + (live ? "Live" : "Soon") + '</span>' +
+        '<h2>' + d.title + '</h2>' +
+        '<p>' + d.desc + '</p>' +
+        '<span class="num">Demo #' + d.n + (live ? ' · /' + d.path : '') + '</span>';
+      grid.appendChild(el);
+    }
+  </script>
+</body>
+</html>
