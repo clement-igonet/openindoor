@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>F3D — Festung 3D · OpenIndoor</title>
-  <link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
+  <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
     #map { position: absolute; inset: 0; }
@@ -92,7 +92,7 @@
     <div class="play">▶ Click to play</div>
   </div>
 
-  <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
   <script>
     // ---------------------------------------------------------------------
     // The level is plain ASCII — edit LEVEL to design maps by hand.
@@ -193,13 +193,17 @@
     // ---------------------------------------------------------------------
     const CELL   = 4;     // metres per grid cell
     const WALL_H = 3;     // wall height (metres)
-    const EYE_H  = 1.75;  // eye height (metres) — human
-    const PITCH     = 89;  // camera pitch (deg). ~90 = horizontal; at exactly 90 the eye
-                           // drops to the floor (altitude = cos(pitch)·dist = 0), so 89.
-                           // (NB: don't raise this toward 90 to fix aim — it lowers the
-                           // derived zoom and blows up the wall-texture scale. The real
-                           // aim fix is sizing the enemy sprite correctly; see GH below.)
+    const EYE_H  = 1.75;  // nominal human eye height (metres)
+    const AIM_H  = 1.50;  // eye/aim height the camera actually sits at. With a level
+                          // 90° view the crosshair points here at EVERY distance, so
+                          // it always rests on a guard's pectoral (~1.50 m).
+    const PITCH     = 90;  // TRUE horizon view. At 90° the eye and the look-at centre
+                           // are at the SAME altitude, so the old EYE_H/cos(pitch)→∞
+                           // blow-up doesn't apply: we put the centre at elevation
+                           // EYE_H a fixed distance ahead (see updateCamera).
     const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
+    const ZOOM   = 20;     // fixed world-scale. Decoupling zoom from pitch keeps the
+                           // wall-texture scale steady at any pitch (incl. a full 90°).
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
     const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
 
@@ -282,44 +286,37 @@
     // rectangle is reused for hit detection.
     const spriteLayer = document.getElementById("sprites");
 
-    // Eye-level (horizon) screen Y: a far ground point projects onto it. For a
-    // no-roll camera it's a single horizontal line, so any far point works. We
-    // pin each enemy's HEAD relative to it, which is the key to stable framing:
-    // a 1.75 m head sits exactly on the horizon (≈ the crosshair) at EVERY
-    // distance, so walking closer drops the FEET rather than raising the head.
-    function horizonScreenY() {
-      const f = map.project(toLngLat(player.x + Math.cos(player.heading) * 4000,
-                                     player.y + Math.sin(player.heading) * 4000));
-      return f.y;
-    }
-
     // Returns the enemy's drawn rectangle in CSS px {x,y,w,h,dist}, or null if
     // it must not be shown (too far, behind us, or hidden behind a wall).
-    function spriteRect(e, horizonY) {
+    // The camera is a level (90°) view at eye/aim height AIM_H, so we pin each
+    // enemy's AIM_H-height point (the pectoral, 1.50 m) to the crosshair (screen
+    // centre). Because the eye is also at AIM_H, this lands the feet exactly on
+    // the floor and the head at the right height — no float, no special cases —
+    // and the crosshair sits on every guard's chest at any distance.
+    function spriteRect(e, ccy) {
       const dx = e.x - player.x, dy = e.y - player.y;
       const dist = Math.hypot(dx, dy);
       if (dist < 0.001 || dist > SIGHT) return null;
       const ad = Math.atan2(dy, dx) - player.heading;                 // skip behind us
       if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) return null;
       if (!hasLineOfSight(player.x, player.y, e.x, e.y)) return null;
-      const feet = map.project(toLngLat(e.x, e.y));                   // floor point, CSS px
+      const feet = map.project(toLngLat(e.x, e.y));                   // for horizontal x
       // pixels-per-metre at the enemy: project a point 1 m to the side and
       // measure the screen distance (vertical scale ≈ horizontal at this depth).
       const sx = -dy / dist, sy = dx / dist;                          // unit ⟂ (ground)
       const side = map.project(toLngLat(e.x + sx, e.y + sy));
       const pxPerM = Math.hypot(side.x - feet.x, side.y - feet.y);
       if (!isFinite(pxPerM) || pxPerM <= 0) return null;
-      // Head pinned to the horizon, raised/lowered by (height − eye height).
-      // A guard (1.75 m = eye) → head exactly on the horizon; a brute (2.3 m)
-      // → above it; feet stay on the exact ground projection.
-      const headY = horizonY - (TYPES[e.type].h - EYE_H) * pxPerM;
-      const h = Math.max(1, feet.y - headY), w = h * ASPECT;
-      return { x: feet.x - w / 2, y: headY, w, h, dist };
+      const H = TYPES[e.type].h;
+      const h = pxPerM * H;                       // real height, undistorted
+      const topY = ccy - pxPerM * (H - AIM_H);    // pin the 1.50 m point to the crosshair
+      const w = h * ASPECT;
+      return { x: feet.x - w / 2, y: topY, w, h, dist };
     }
 
     // Reposition / resize / depth-sort every enemy's <img> each frame.
     function updateSprites() {
-      const horizonY = horizonScreenY();
+      const ccy = (map.getCanvas().clientHeight || 800) / 2;
       for (const e of enemies) {
         if (!e._el) {
           const img = document.createElement("img");
@@ -329,7 +326,7 @@
           e._el = img;
         }
         const el = e._el;
-        const r = e.alive ? spriteRect(e, horizonY) : null;
+        const r = e.alive ? spriteRect(e, ccy) : null;
         if (!r) { el.style.display = "none"; continue; }
         el.style.display = "block";
         el.style.left = r.x.toFixed(1) + "px";
@@ -348,7 +345,10 @@
       y: (start.r + 0.5) * CELL,
       heading: -Math.PI / 2,   // start facing 90° to the right
     };
-    const RADIUS = 1.2; // collision radius (metres)
+    const RADIUS = 1.6; // collision radius (m): kept large so the eye doesn't press
+                        // right up against a wall (the near-horizontal view makes a
+                        // close wall fill the screen). Still < 2 m, so 4 m corridors
+                        // and doorways stay passable.
 
     const isWall = (x, y) => {
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
@@ -356,11 +356,12 @@
       return at(r, c) in WALL_TEX;
     };
     // Enemies block the player like soft pillars, so you can't walk into one and
-    // have its billboard balloon across the screen — you stop ~2 m away.
-    const ENEMY_R = 1.0;
+    // have its billboard balloon across the screen. The block radius is kept under
+    // 2 m (vs the 4 m cell pitch) so you can still slip between/around guards.
+    const ENEMY_BLOCK = 1.7;   // stop this far (m) from a guard's centre
     const enemyBlocks = (x, y) => {
       for (const e of enemies)
-        if (e.alive && Math.hypot(e.x - x, e.y - y) < RADIUS + ENEMY_R) return true;
+        if (e.alive && Math.hypot(e.x - x, e.y - y) < ENEMY_BLOCK) return true;
       return false;
     };
 
@@ -493,11 +494,10 @@
       // you see is exactly what you can hit. Nearest visible enemy wins.
       const cv = map.getCanvas();
       const ccx = cv.clientWidth / 2, ccy = cv.clientHeight / 2;     // crosshair pixel
-      const horizonY = horizonScreenY();
       let best = null, bestDist = 1e9, near = null, nearD = 1e9, nearOn = false;
       for (const e of enemies) {
         if (!e.alive) continue;
-        const r = spriteRect(e, horizonY);                           // null if hidden
+        const r = spriteRect(e, ccy);                                // null if hidden
         if (!r) continue;
         const on = ccx >= r.x && ccx <= r.x + r.w && ccy >= r.y && ccy <= r.y + r.h;
         if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
@@ -517,33 +517,28 @@
     addEventListener("keydown", (e) => { if (e.code === "Space") { e.preventDefault(); fire(); } });
 
     // ---------------------------------------------------------------------
-    // Camera (MapLibre standard camera — there is NO free camera API).
-    // To fake a first-person eye: MapLibre orbits around `center` (a ground
-    // point) with the eye sitting `D·sin(pitch)` behind and `D·cos(pitch)` above
-    // it, where D (eye→center distance) is fixed by zoom + viewport. So we place
-    // `center` that same distance AHEAD of the player and pick the zoom that
-    // makes the eye land at EYE_H. Result: the eye is at the player, looking
-    // along the heading; turning rotates the look point around the fixed eye.
+    // Camera — TRUE first-person horizon view (pitch 90°).
+    // MapLibre orbits a `center` point. The classic trick (center on the ground,
+    // eye D·cos(pitch) above it) divides by zero at 90° — that's why we were
+    // stuck at 89°. The escape: at 90° the eye and the center sit at the SAME
+    // altitude, so we instead place the center at elevation EYE_H, a fixed
+    // distance `dWorld` straight ahead, at a FIXED zoom. MapLibre then puts the
+    // eye exactly dWorld back along the level look ray — i.e. on the player, at
+    // EYE_H, looking dead level. `elevation` is honoured because we call
+    // setCenterClampedToGround(false) on load. Fixed zoom also means the
+    // wall-texture scale no longer rides on pitch.
     //   bearing = compass dir of forward = atan2(east, north) = atan2(cos h, sin h)
     // ---------------------------------------------------------------------
-    // NOTE: calculateCameraOptionsFromCameraLngLatAltRotation() was tried here
-    // but mis-solves for our tiny near-(0,0) world — it placed the look-at point
-    // ~10 km away at zoom ~13 (scene off-screen). So we keep the hand-derived rig:
-    // put `center` D·sin(pitch) AHEAD of the eye and pick the zoom that lands the
-    // eye at EYE_H. (D = eye→center distance, fixed by zoom + viewport.)
-    const PR = PITCH * Math.PI / 180;
     let lastError = "";
     function updateCamera() {
       try {
         const H = map.getCanvas().clientHeight || 800;
-        const D = EYE_H / Math.cos(PR);            // eye→center distance (m)
-        const mpp = D / (1.5 * H);                 // metres/pixel (fov ≈ 36.9° → 1.5·H px)
-        const zoom = Math.log2(EARTH / (512 * mpp));
-        const off = D * Math.sin(PR);              // place center this far ahead (m)
-        const cx = player.x + Math.cos(player.heading) * off;
-        const cy = player.y + Math.sin(player.heading) * off;
+        const mpp = EARTH / (512 * Math.pow(2, ZOOM));   // metres per pixel (lat ≈ 0)
+        const dWorld = 1.5 * H * mpp;                    // eye→centre distance (m)
         const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
-        map.jumpTo({ center: toLngLat(cx, cy), bearing, pitch: PITCH, zoom });
+        const cx = player.x + Math.cos(player.heading) * dWorld;
+        const cy = player.y + Math.sin(player.heading) * dWorld;
+        map.jumpTo({ center: toLngLat(cx, cy), zoom: ZOOM, bearing, pitch: PITCH, elevation: AIM_H });
       } catch (err) {
         lastError = String(err && err.message || err);
       }
@@ -777,7 +772,11 @@
         .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
     });
 
-    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); } catch (_) {} });
+    // setCenterClampedToGround(false) so the camera centre can sit at elevation
+    // EYE_H (instead of being snapped to the floor) — required for the 90° rig.
+    map.on("load", () => {
+      try { map.setMaxPitch(MAX_PITCH); map.setCenterClampedToGround(false); } catch (_) {}
+    });
     requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
 
     // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
