@@ -266,34 +266,32 @@
     };
     // ---------------------------------------------------------------------
     // Sprite atlas config. Enemies are drawn by cropping ONE frame out of a
-    // sprite sheet (via CSS background-position), so the same engine handles a
-    // single image OR a full directional + animated sheet — just edit SPRITE.
+    // per-type sprite sheet (via CSS background-position) — see the SHEETS map.
     //
-    // The sheet is a grid of `cols × rows` frames, each `fw × fh` px. A "pose"
+    // Each sheet is a grid of `cols × rows` frames, each `fw × fh` px. A "pose"
     // is one ROW; `dirs` columns of that row are the 8 viewing angles of the
     // billboard (set dirs:1 for a non-directional image). `walkRows` are the
     // rows that form the walk cycle; `deathFrames` is an [[col,row],…] sequence
-    // played once on death (last cell stays as the corpse). The current file is
-    // a single 44×106 frame placeholder — point `src` at a real sheet and set
-    // cols/rows/fw/fh/dirs/walkRows/deathFrames to light it all up.
+    // played once on death (last cell stays as the corpse).
     // ---------------------------------------------------------------------
-    const SPRITE = {
-      src: "enemies/warrior_sprites.png",  // ORIGINAL art (not the Wolf3D rip)
-      cols: 8, rows: 7,          // sheet grid (512×448 → exact 64 px cells)
-      fw: 64, fh: 64,            // one frame, px (square cell)
-      dirs: 8,                   // 8 viewing directions per pose (true billboard)
-      standRow: 0,               // row 0 = standing (8 dirs)
-      walkRows: [1, 2, 3, 4],    // rows 1-4 = walk cycle (8 dirs each)
-      walkFps: 6,
-      deathFrames: [[0,5],[1,5],[2,5],[3,5],[4,5]],  // row 5 = death → corpse
-      deathFps: 8,
-      // Rotate the column→angle mapping if the facings come out wrong/mirrored.
-      dirOffset: 0,
-      bodyFrac: 0.55,            // figure occupies ~this fraction of the square cell
-                                 // width; used to keep the hit-box on the body, not
-                                 // the transparent sides.
+    // Per-type sprite sheets (all ORIGINAL art). A sheet is a cols×rows grid of
+    // fw×fh cells; `dirs` columns of a pose-row are its 8 viewing angles; rows
+    // 1-4 are the walk cycle; row 5 is the death sequence (last cell = corpse).
+    // Types with no entry fall back to DEFAULT_SHEET. Tunables per sheet:
+    //   dirOffset  — rotate the column→angle map if facings look wrong/mirrored
+    //   bodyFrac   — figure width as a fraction of the cell (hit-box stays on the body)
+    const sheet = (o) => Object.assign({
+      cols: 8, rows: 7, fw: 64, fh: 64, dirs: 8,
+      standRow: 0, walkRows: [1, 2, 3, 4], walkFps: 6,
+      deathFrames: [[0, 5], [1, 5], [2, 5], [3, 5], [4, 5]], deathFps: 8,
+      dirOffset: 0, bodyFrac: 0.55,
+    }, o);
+    const SHEETS = {
+      guard:   sheet({ src: "enemies/guard_sprites.png",   fw: 64, fh: 64 }), // red warrior
+      trooper: sheet({ src: "enemies/trooper_sprites.png", fw: 65, fh: 65 }), // green soldier
     };
-    const ASPECT = SPRITE.fw / SPRITE.fh;
+    const DEFAULT_SHEET = SHEETS.guard;
+    const sheetFor = (type) => SHEETS[type] || DEFAULT_SHEET;
     const SIGHT = 52;   // metres: draw / allow hitting enemies out to here
     // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
@@ -336,32 +334,32 @@
       const side = map.project(toLngLat(e.x + sx, e.y + sy));
       const pxPerM = Math.hypot(side.x - feet.x, side.y - feet.y);
       if (!isFinite(pxPerM) || pxPerM <= 0) return null;
-      const H = TYPES[e.type].h;
+      const H = TYPES[e.type].h, sh = sheetFor(e.type);
       const h = pxPerM * H;                       // real height, undistorted
       const topY = ccy - pxPerM * (H - AIM_H);    // pin the 1.50 m point to the crosshair
-      const w = h * ASPECT;
+      const w = h * (sh.fw / sh.fh);
       return { x: feet.x - w / 2, y: topY, w, h, dist };
     }
 
     // Which atlas cell {col,row} to show for an enemy right now: viewing-angle
-    // column (8-dir billboard) + walk-cycle / death-sequence row.
-    function spriteFrame(e, now) {
-      if (e.dead && SPRITE.deathFrames.length) {            // play the death sequence
-        const i = Math.floor((now - e.deadAt) / 1000 * SPRITE.deathFps);
-        const cell = SPRITE.deathFrames[Math.min(i, SPRITE.deathFrames.length - 1)];
+    // column (8-dir billboard) + walk-cycle / death-sequence row, in its sheet.
+    function spriteFrame(e, now, sh) {
+      if (e.dead && sh.deathFrames.length) {                // play the death sequence
+        const i = Math.floor((now - e.deadAt) / 1000 * sh.deathFps);
+        const cell = sh.deathFrames[Math.min(i, sh.deathFrames.length - 1)];
         return { col: cell[0], row: cell[1] };
       }
       let col = 0;
-      if (SPRITE.dirs > 1) {                                // facing relative to the viewer
+      if (sh.dirs > 1) {                                    // facing relative to the viewer
         const toCam = Math.atan2(player.y - e.y, player.x - e.x);
-        let rel = e.dir - toCam + SPRITE.dirOffset * Math.PI / 180;
+        let rel = e.dir - toCam + sh.dirOffset * Math.PI / 180;
         rel = (rel % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-        col = Math.round(rel / (Math.PI * 2) * SPRITE.dirs) % SPRITE.dirs;
+        col = Math.round(rel / (Math.PI * 2) * sh.dirs) % sh.dirs;
       }
-      let row = SPRITE.standRow;
+      let row = sh.standRow;
       if (e.state === "chase" || e.state === "patrol") {    // walk animation while moving
-        const wr = SPRITE.walkRows;
-        row = wr[Math.floor(now / 1000 * SPRITE.walkFps) % wr.length];
+        const wr = sh.walkRows;
+        row = wr[Math.floor(now / 1000 * sh.walkFps) % wr.length];
       }
       return { col, row };
     }
@@ -370,26 +368,27 @@
     function updateSprites(now) {
       const ccy = (map.getCanvas().clientHeight || 800) / 2;
       for (const e of enemies) {
+        const sh = sheetFor(e.type);
         if (!e._el) {
           const el = document.createElement("div");
           el.style.cssText = "position:absolute;background-repeat:no-repeat;" +
-            "image-rendering:pixelated;display:none;background-image:url('" + SPRITE.src + "');";
+            "image-rendering:pixelated;display:none;background-image:url('" + sh.src + "');";
           spriteLayer.appendChild(el);
           e._el = el;
         }
         const el = e._el;
         // A corpse (dead) still draws its last death frame; a fully-gone enemy hides.
-        const show = e.alive || (e.dead && SPRITE.deathFrames.length);
+        const show = e.alive || (e.dead && sh.deathFrames.length);
         const r = show ? spriteRect(e, ccy) : null;
         if (!r) { el.style.display = "none"; continue; }
-        const f = spriteFrame(e, now);
+        const f = spriteFrame(e, now, sh);
         el.style.display = "block";
         el.style.left = r.x.toFixed(1) + "px";
         el.style.top = r.y.toFixed(1) + "px";
         el.style.width = r.w.toFixed(1) + "px";
         el.style.height = r.h.toFixed(1) + "px";
         // Crop one frame: scale the whole sheet so a cell == (w × h), then offset.
-        el.style.backgroundSize = (SPRITE.cols * r.w).toFixed(1) + "px " + (SPRITE.rows * r.h).toFixed(1) + "px";
+        el.style.backgroundSize = (sh.cols * r.w).toFixed(1) + "px " + (sh.rows * r.h).toFixed(1) + "px";
         el.style.backgroundPosition = (-f.col * r.w).toFixed(1) + "px " + (-f.row * r.h).toFixed(1) + "px";
         el.style.zIndex = Math.max(0, Math.round(100000 - r.dist * 100)); // nearer on top
       }
@@ -563,7 +562,7 @@
         if (!e.alive) continue;
         const r = spriteRect(e, ccy);                                // null if hidden
         if (!r) continue;
-        const bw = r.w * SPRITE.bodyFrac, bx = r.x + (r.w - bw) / 2;  // body, not the
+        const bw = r.w * sheetFor(e.type).bodyFrac, bx = r.x + (r.w - bw) / 2; // body, not
         const on = ccx >= bx && ccx <= bx + bw && ccy >= r.y && ccy <= r.y + r.h; // transparent sides
 
         if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
@@ -575,7 +574,7 @@
         best.hp -= SHOT_DMG;
         if (best.hp <= 0) {
           best.alive = false;                              // no longer targetable / blocking
-          if (SPRITE.deathFrames.length) { best.dead = true; best.deadAt = performance.now(); } // play death
+          if (sheetFor(best.type).deathFrames.length) { best.dead = true; best.deadAt = performance.now(); } // death
           else if (best._el) best._el.style.display = "none";                                   // or vanish
         } else if (best._el) {                             // alive: flash white to show the hit
           best._el.style.filter = "brightness(2.4)";
