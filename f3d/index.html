@@ -51,7 +51,7 @@
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
     <canvas id="minimap" style="position:absolute;top:8px;right:8px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
     <div id="controls">
-      <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> / <b>mouse·trackpad</b> turn &nbsp;·&nbsp; <b>Esc</b> release
+      <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> turn &nbsp;·&nbsp; <b>Alt + ← →</b> strafe &nbsp;·&nbsp; <b>mouse·trackpad</b> look &nbsp;·&nbsp; <b>Esc</b> release
     </div>
   </div>
 
@@ -107,9 +107,10 @@
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
-    // Retro wall palette, chosen per cell so corridors read clearly.
-    const PALETTE = ["#6b6b6b", "#8a8a8a", "#3b5a9b", "#7a3b2e", "#4a7a3b"];
-    const wallColor = (r, c) => PALETTE[(r * 3 + c * 7) % PALETTE.length];
+    // Each wall cell gets one of a few procedural stone/brick textures, drawn
+    // at runtime (see makeTexture + the styleimagemissing handler). Original art.
+    const TEXES = ["stone", "brick", "blue", "mossy"];
+    const texFor = (r, c) => TEXES[(r * 3 + c * 7) % TEXES.length];
 
     // Build wall polygons + find the start cell.
     const wallFeatures = [];
@@ -122,7 +123,7 @@
         const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
         wallFeatures.push({
           type: "Feature",
-          properties: { color: wallColor(r, c) },
+          properties: { tex: texFor(r, c) },
           geometry: { type: "Polygon", coordinates: [[
             toLngLat(x0, y0), toLngLat(x1, y0),
             toLngLat(x1, y1), toLngLat(x0, y1), toLngLat(x0, y0),
@@ -180,7 +181,7 @@
           {
             id: "walls", type: "fill-extrusion", source: "walls",
             paint: {
-              "fill-extrusion-color": ["get", "color"],
+              "fill-extrusion-pattern": ["get", "tex"],
               "fill-extrusion-height": WALL_H,
               "fill-extrusion-base": 0,
               "fill-extrusion-vertical-gradient": true,
@@ -194,7 +195,7 @@
     // Input.
     // ---------------------------------------------------------------------
     const keys = Object.create(null);
-    addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code.startsWith("Arrow")) e.preventDefault(); });
+    addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code.startsWith("Arrow") || e.code.startsWith("Alt")) e.preventDefault(); });
     addEventListener("keyup",   (e) => { keys[e.code] = false; });
 
     const overlay = document.getElementById("overlay");
@@ -286,9 +287,11 @@
         const dt = last ? Math.min(0.05, (t - last) / 1000) : 0;
         last = t; ticks++;
 
-        // Turn: arrow keys turn (retro-FPS style).
-        if (keys.ArrowLeft)  player.heading += TURN * dt;
-        if (keys.ArrowRight) player.heading -= TURN * dt;
+        // Turn with arrows — unless Alt is held, which makes ←/→ strafe
+        // (classic), so you can turn and strafe at once. A/D (ZQSD) always strafe.
+        const alt = keys.AltLeft || keys.AltRight;
+        if (!alt && keys.ArrowLeft)  player.heading += TURN * dt;
+        if (!alt && keys.ArrowRight) player.heading -= TURN * dt;
 
         // Move. event.code is physical-position based, so KeyW/A/S/D map to the
         // same physical keys on QWERTY (WASD) and AZERTY (ZQSD).
@@ -297,8 +300,8 @@
         let dx = 0, dy = 0;
         if (keys.KeyW || keys.ArrowUp)   { dx += ch * fwd; dy += sh * fwd; }
         if (keys.KeyS || keys.ArrowDown) { dx -= ch * fwd; dy -= sh * fwd; }
-        if (keys.KeyA) { dx += -sh * fwd; dy += ch * fwd; }
-        if (keys.KeyD) { dx +=  sh * fwd; dy += -ch * fwd; }
+        if (keys.KeyA || (alt && keys.ArrowLeft))  { dx += -sh * fwd; dy += ch * fwd; }  // strafe left
+        if (keys.KeyD || (alt && keys.ArrowRight)) { dx +=  sh * fwd; dy += -ch * fwd; } // strafe right
         if (dx || dy) tryStep(dx, dy);
 
         updateCamera();
@@ -323,6 +326,36 @@
       }
       requestAnimationFrame(frame);   // ALWAYS reschedule — input must never die
     }
+
+    // Procedural, original wall textures — generated on demand when MapLibre
+    // asks for a pattern image it doesn't have.
+    function makeTexture(id) {
+      const S = 64;
+      const cv = document.createElement("canvas"); cv.width = cv.height = S;
+      const g = cv.getContext("2d");
+      const palettes = {
+        stone: ["#7a7a7a", "#5e5e5e", "#3a3a3a"],
+        brick: ["#9a4e3b", "#7a3b2e", "#2c160f"],
+        blue:  ["#4666ac", "#34508c", "#1a2742"],
+        mossy: ["#647f54", "#4a6440", "#22301b"],
+      };
+      const [light, base, mortar] = palettes[id] || palettes.stone;
+      g.fillStyle = mortar; g.fillRect(0, 0, S, S);   // mortar background
+      const bw = 32, bh = 16;
+      for (let row = 0; row * bh < S; row++) {
+        const off = (row % 2) ? bw / 2 : 0;
+        for (let bx = -bw; bx < S; bx += bw) {
+          const px = bx + off + 1, py = row * bh + 1, w = bw - 2, h = bh - 2;
+          g.fillStyle = base; g.fillRect(px, py, w, h);
+          g.fillStyle = light; g.fillRect(px, py, w, 2);          // top highlight
+          g.fillStyle = mortar; g.fillRect(px, py + h - 2, w, 2); // bottom shade
+        }
+      }
+      return g.getImageData(0, 0, S, S);
+    }
+    map.on("styleimagemissing", (e) => {
+      if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id));
+    });
 
     map.on("load", () => { try { map.setMaxPitch(85); } catch (_) {} });
     requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
