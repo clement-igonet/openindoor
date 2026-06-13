@@ -21,6 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure Pages (enables it on first run)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Assemble site
         run: |
           mkdir -p _site
