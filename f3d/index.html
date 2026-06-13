@@ -122,7 +122,7 @@
 
     // Each wall cell gets one of a few procedural stone/brick textures, drawn
     // at runtime (see makeTexture + the styleimagemissing handler). Original art.
-    const TEXES = ["stone", "brick", "blue", "mossy"];
+    const TEXES = ["stone", "crackstone", "steel", "wood", "brick", "purple", "moss", "cave"];
     const texFor = (r, c) => TEXES[(r * 3 + c * 7) % TEXES.length];
 
     // Build wall polygons + find the start cell.
@@ -499,9 +499,19 @@
       g.fillRect(14, 17, 20, 3);                                                       // helmet
       return g.getImageData(0, 0, W, Hh);
     }
+    // Each wall-texture id maps to one of the original tile PNGs.
+    const TILE = {
+      stone: "walls/000.png", crackstone: "walls/002.png", steel: "walls/012.png",
+      wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
+      moss:  "walls/030.png", cave:  "walls/032.png",
+    };
     map.on("styleimagemissing", (e) => {
       if (map.hasImage(e.id)) return;
-      map.addImage(e.id, e.id === "enemy" ? makeEnemyIcon() : makeTexture(e.id));
+      // Add a procedural placeholder immediately (stops the event from
+      // re-firing), then upgrade to the original tile PNG once it loads.
+      map.addImage(e.id, makeTexture(e.id));
+      const url = TILE[e.id];
+      if (url) map.loadImage(url).then((img) => { if (img && img.data) map.updateImage(e.id, img.data); }).catch(() => {});
     });
 
     map.on("load", () => { try { map.setMaxPitch(85); } catch (_) {} });
