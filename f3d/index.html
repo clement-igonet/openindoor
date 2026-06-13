@@ -189,8 +189,8 @@
     // meridian, then convert to lng/lat for MapLibre.
     // ---------------------------------------------------------------------
     const CELL   = 4;     // metres per grid cell
-    const WALL_H = 4;     // wall height (metres) — cube walls (height ≈ cell width)
-    const EYE_H  = 2.2;   // eye height (metres) — human eye, below the wall top
+    const WALL_H = 3;     // wall height (metres)
+    const EYE_H  = 1.75;  // eye height (metres) — human
     const PITCH     = 89;  // camera pitch (deg). ~90 = horizontal; at exactly 90 the eye
                            // drops to the floor (altitude = cos(pitch)·dist = 0), so 89.
     const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
@@ -246,14 +246,19 @@
     const DIFF = ({ baby: 0, easy: 1, normal: 2, hard: 3 })[
       (location.search.match(/diff=(\w+)/) || [])[1]
     ] ?? 2;
-    const TYPES = {
-      guard:   { hp: [25, 25, 25, 25],       color: "#566b3f", head: "#caa07a", body: 2.0, w: 0.8 },
-      trooper: { hp: [100, 100, 100, 100],   color: "#39507e", head: "#caa07a", body: 2.2, w: 0.9 },
-      hound:   { hp: [1, 1, 1, 1],           color: "#6b4a2b", head: "#7a5230", body: 0.9, w: 0.7 },
-      officer: { hp: [50, 50, 50, 50],       color: "#9aa07a", head: "#caa07a", body: 2.0, w: 0.8 },
-      brute:   { hp: [45, 55, 55, 65],       color: "#7a3b2e", head: "#caa07a", body: 2.6, w: 1.1 },
-      boss:    { hp: [850, 950, 1050, 1200], color: "#2a2a30", head: "#b08060", body: 3.0, w: 1.4 },
+    const TYPES = {        // h = figure height in metres (player eye ≈ 1.75)
+      guard:   { hp: [25, 25, 25, 25],       h: 1.8 },
+      trooper: { hp: [100, 100, 100, 100],   h: 1.85 },
+      hound:   { hp: [1, 1, 1, 1],           h: 1.0 },
+      officer: { hp: [50, 50, 50, 50],       h: 1.8 },
+      brute:   { hp: [45, 55, 55, 65],       h: 2.3 },
+      boss:    { hp: [850, 950, 1050, 1200], h: 2.9 },
     };
+    // Cropped guard sprite is 44×106 px (figure fills it). Size it so its on-screen
+    // height equals the type's height in metres at the current distance.
+    const GW = 44, GH = 106;
+    const enemyIconSize = (e, dist) =>
+      Math.min(8, (TYPES[e.type].h * 1.5 * (window.innerHeight || 800)) / (Math.max(1.2, dist) * GH));
     // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
     for (let r = 0; r < ROWS; r++) {
@@ -266,20 +271,16 @@
     // can't depth-test against the 3D walls, so we cull by line-of-sight (to
     // hide enemies in other rooms) and scale by distance for pseudo-perspective.
     const enemiesGeoJSON = () => {
-      const H = window.innerHeight || 800;
       return {
         type: "FeatureCollection",
         features: enemies.filter((e) => e.alive)
           .map((e) => ({ e, dist: Math.hypot(e.x - player.x, e.y - player.y) }))
           .filter((o) => o.dist < 46 && hasLineOfSight(player.x, player.y, o.e.x, o.e.y))
-          .map(({ e, dist }) => {
-            const scale = TYPES[e.type].w / 0.8;            // brute/boss bigger
-            return {
-              type: "Feature",
-              properties: { size: Math.min(9, (2.8 * 1.5 * H) / (128 * Math.max(1.5, dist))) * scale },
-              geometry: { type: "Point", coordinates: toLngLat(e.x, e.y) },
-            };
-          }),
+          .map(({ e, dist }) => ({
+            type: "Feature",
+            properties: { size: enemyIconSize(e, dist) },
+            geometry: { type: "Point", coordinates: toLngLat(e.x, e.y) },
+          })),
       };
     };
 
@@ -438,14 +439,14 @@
         if (dist < 0.01) continue;
         const ad = Math.atan2(dy, dx) - player.heading;              // skip enemies behind us
         if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) continue;
-        // sprite rectangle on screen (same size formula as enemiesGeoJSON)
+        // sprite rectangle on screen (same size formula as enemiesGeoJSON).
+        // The cropped sprite fills its frame and is anchored bottom-centre at
+        // the feet, so the rect is symmetric around p.x.
         const p = map.project(toLngLat(e.x, e.y));                   // feet, screen px
-        const sz = Math.min(9, (2.8 * 1.5 * Hpx) / (128 * Math.max(1.5, dist))) * (TYPES[e.type].w / 0.8);
-        // guard figure occupies frame px (16,22)-(60,128) of 128; the frame's
-        // bottom-centre (64,128) is anchored at the feet (p), so map those bounds:
-        const wpx = 128 * sz;
-        const on = ccx >= p.x - 0.375 * wpx && ccx <= p.x - 0.031 * wpx &&
-                   ccy >= p.y - 0.828 * wpx && ccy <= p.y;
+        const sz = enemyIconSize(e, dist);
+        const wpx = GW * sz, hpx = GH * sz;
+        const on = ccx >= p.x - wpx / 2 && ccx <= p.x + wpx / 2 &&
+                   ccy >= p.y - hpx && ccy <= p.y;
         if (dist < nearD) { nearD = dist; near = e; nearOn = on; }
         if (!on || dist >= bestDist) continue;
         if (!hasLineOfSight(player.x, player.y, e.x, e.y)) continue;
@@ -699,7 +700,7 @@
       stone: "walls/000.png", crackstone: "walls/002.png", steel: "walls/012.png",
       wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
       moss:  "walls/030.png", cave:  "walls/032.png",
-      guard: "enemies/guard_0.png",
+      guard: "enemies/guard.png",
     };
     const loadingTex = new Set();
     map.on("styleimagemissing", (e) => {
