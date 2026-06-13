@@ -345,10 +345,13 @@
       y: (start.r + 0.5) * CELL,
       heading: -Math.PI / 2,   // start facing 90° to the right
     };
-    const RADIUS = 1.8; // collision radius (m): stop well before a wall so the level
-                        // horizon view can't nose up to the base and peek over the
-                        // 3 m top. Still < 2 m, so 4 m corridors / doorways stay
-                        // passable (tighten toward 2.0 for more buffer, less play).
+    // Collision uses two radii so we can stop FAR from a wall ahead without
+    // jamming narrow passages: LEAD is the forward stop distance (how far the eye
+    // halts before the wall it faces — keeps the level horizon view from peeking
+    // over the 3 m top); WIDTH is the body half-width for side clearance. WIDTH
+    // must stay < 2 m so 4 m corridors/doorways remain passable; LEAD may exceed it.
+    const LEAD  = 2.0;
+    const WIDTH = 1.8;
 
     const isWall = (x, y) => {
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
@@ -560,23 +563,23 @@
       // Resolve each axis separately, probing the player's FULL width (3 points
       // across the leading edge) so you can't corner-cut or pass through walls.
       if (dx !== 0) {
-        const nx = player.x + dx, px = nx + Math.sign(dx) * RADIUS;
+        const nx = player.x + dx, px = nx + Math.sign(dx) * LEAD;
         if (!isWall(px, player.y) &&
-            !isWall(px, player.y - RADIUS) &&
-            !isWall(px, player.y + RADIUS) &&
+            !isWall(px, player.y - WIDTH) &&
+            !isWall(px, player.y + WIDTH) &&
             !enemyBlocks(nx, player.y)) player.x = nx;
       }
       if (dy !== 0) {
-        const ny = player.y + dy, py = ny + Math.sign(dy) * RADIUS;
+        const ny = player.y + dy, py = ny + Math.sign(dy) * LEAD;
         if (!isWall(player.x, py) &&
-            !isWall(player.x - RADIUS, py) &&
-            !isWall(player.x + RADIUS, py) &&
+            !isWall(player.x - WIDTH, py) &&
+            !isWall(player.x + WIDTH, py) &&
             !enemyBlocks(player.x, ny)) player.y = ny;
       }
     }
     function tryStep(dx, dy) {
       // Sub-step so fast movement can never tunnel through a wall in one frame.
-      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (RADIUS * 0.5)));
+      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (WIDTH * 0.5)));
       for (let i = 0; i < n; i++) stepAxis(dx / n, dy / n);
     }
 
