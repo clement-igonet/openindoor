@@ -373,11 +373,14 @@
     addEventListener("mousemove", (e) => {
       if (document.pointerLockElement === canvas) player.heading -= e.movementX * MOUSE_SENS;
     });
-    // Trackpad / wheel: two-finger up/down moves forward / back.
+    // Trackpad / wheel: a single two-finger pan turns (horizontal) AND moves
+    // forward/back (vertical) at the same time. (One finger with pointer-lock
+    // also turns via mousemove above.)
     addEventListener("wheel", (e) => {
       e.preventDefault();
-      const step = -e.deltaY * 0.02;   // swipe up = forward
-      tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
+      player.heading -= e.deltaX * 0.004;            // horizontal pan = turn
+      const step = -e.deltaY * 0.02;                 // vertical pan = forward/back
+      if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
     }, { passive: false });
 
     // Shooting: Space fires — muzzle flash + recoil, and the nearest living
