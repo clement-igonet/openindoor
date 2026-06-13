@@ -51,7 +51,7 @@
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
     <canvas id="minimap" style="position:absolute;top:8px;right:8px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
     <div id="weapon" style="position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);pointer-events:none;transition:transform .07s ease-out;">
-      <img id="weaponimg" src="weapon/bereta_idle.png" alt="" style="display:block;width:380px;height:auto;image-rendering:pixelated;" />
+      <img id="weaponimg" src="weapon/bereta_04.png" alt="" style="display:block;width:380px;height:auto;image-rendering:pixelated;" />
     </div>
     <div id="controls">
       <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> turn &nbsp;·&nbsp; <b>Alt + ← →</b> strafe &nbsp;·&nbsp; <b>Space</b> shoot &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>Esc</b> release
@@ -309,10 +309,10 @@
       if (!canFire) return;
       canFire = false;
       setTimeout(() => { canFire = true; }, 420);
-      weaponImg.src = "weapon/bereta_fire.png";
+      weaponImg.src = "weapon/bereta_02.png";
       weaponEl.style.transform = "translateX(-50%) translateY(22px)";
       setTimeout(() => {
-        weaponImg.src = "weapon/bereta_idle.png";
+        weaponImg.src = "weapon/bereta_04.png";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
       let best = null, bestDist = 200;            // metres (whole level in range)
