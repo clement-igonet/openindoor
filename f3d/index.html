@@ -201,6 +201,7 @@
                            // aim fix is sizing the enemy sprite correctly; see GH below.)
     const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
+    const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
@@ -253,11 +254,11 @@
     ] ?? 2;
     const TYPES = {        // h = figure height in metres (player eye ≈ 1.75)
       guard:   { hp: [25, 25, 25, 25],       h: 1.75 },
-      trooper: { hp: [100, 100, 100, 100],   h: 1.8 },
-      hound:   { hp: [1, 1, 1, 1],           h: 1.0 },
+      trooper: { hp: [100, 100, 100, 100],   h: 1.80 },
+      hound:   { hp: [1, 1, 1, 1],           h: 1.82 },
       officer: { hp: [50, 50, 50, 50],       h: 1.85 },
-      brute:   { hp: [45, 55, 55, 65],       h: 2.3 },
-      boss:    { hp: [850, 950, 1050, 1200], h: 2.9 },
+      brute:   { hp: [45, 55, 55, 65],       h: 2.10 },
+      boss:    { hp: [850, 950, 1050, 1200], h: 2.20 },
     };
     // Cropped guard sprite is 44×106 px (the figure fills the frame).
     const GW = 44, GH = 106, ASPECT = GW / GH;
@@ -499,17 +500,24 @@
     // along the heading; turning rotates the look point around the fixed eye.
     //   bearing = compass dir of forward = atan2(east, north) = atan2(cos h, sin h)
     // ---------------------------------------------------------------------
+    // NOTE: calculateCameraOptionsFromCameraLngLatAltRotation() was tried here
+    // but mis-solves for our tiny near-(0,0) world — it placed the look-at point
+    // ~10 km away at zoom ~13 (scene off-screen). So we keep the hand-derived rig:
+    // put `center` D·sin(pitch) AHEAD of the eye and pick the zoom that lands the
+    // eye at EYE_H. (D = eye→center distance, fixed by zoom + viewport.)
+    const PR = PITCH * Math.PI / 180;
     let lastError = "";
     function updateCamera() {
       try {
-        // Native camera solver: hand MapLibre the eye's lng/lat + altitude (EYE_H)
-        // + orientation and let it compute center / zoom / elevation. No hand-rolled
-        // zoom math, so wall-texture scale no longer rides on a derived zoom, and
-        // PITCH can approach 90 without the old EYE_H/cos(PITCH) divide-by-zero.
+        const H = map.getCanvas().clientHeight || 800;
+        const D = EYE_H / Math.cos(PR);            // eye→center distance (m)
+        const mpp = D / (1.5 * H);                 // metres/pixel (fov ≈ 36.9° → 1.5·H px)
+        const zoom = Math.log2(EARTH / (512 * mpp));
+        const off = D * Math.sin(PR);              // place center this far ahead (m)
+        const cx = player.x + Math.cos(player.heading) * off;
+        const cy = player.y + Math.sin(player.heading) * off;
         const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
-        const opts = map.calculateCameraOptionsFromCameraLngLatAltRotation(
-          toLngLat(player.x, player.y), EYE_H, bearing, PITCH, 0);
-        map.jumpTo(opts);
+        map.jumpTo({ center: toLngLat(cx, cy), bearing, pitch: PITCH, zoom });
       } catch (err) {
         lastError = String(err && err.message || err);
       }
@@ -741,10 +749,7 @@
         .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
     });
 
-    // setCenterClampedToGround(false): the camera solver returns a center
-    // *elevation*; with clamping on (default) MapLibre snaps center to the ground
-    // and ignores our EYE_H. Off → the eye altitude is honored.
-    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); map.setCenterClampedToGround(false); } catch (_) {} });
+    map.on("load", () => { try { map.setMaxPitch(MAX_PITCH); } catch (_) {} });
     requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
 
     // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
