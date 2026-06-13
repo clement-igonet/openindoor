@@ -112,8 +112,8 @@
     // meridian, then convert to lng/lat for MapLibre.
     // ---------------------------------------------------------------------
     const CELL   = 4;     // metres per grid cell
-    const WALL_H = 16;    // wall height (metres) — tall walls for an enclosed feel
-    const EYE_H  = 5;     // eye height (metres)
+    const WALL_H = 4;     // wall height (metres) — cube walls (height ≈ cell width)
+    const EYE_H  = 2.2;   // eye height (metres) — human eye, below the wall top
     const PITCH  = 85;    // camera pitch (deg from nadir); 85 ≈ near-horizontal, = maxPitch
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
     const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
@@ -165,13 +165,22 @@
         }
       }
     }
-    const enemiesGeoJSON = () => ({
-      type: "FeatureCollection",
-      features: enemies.filter((e) => e.alive).map((e) => ({
-        type: "Feature", properties: {},
-        geometry: { type: "Point", coordinates: toLngLat(e.x, e.y) },
-      })),
-    });
+    // Only enemies with line-of-sight (so none show through walls), sized by
+    // distance so they read as ~2.8 m figures (symbols don't depth-scale alone).
+    const enemiesGeoJSON = () => {
+      const H = window.innerHeight || 800;
+      return {
+        type: "FeatureCollection",
+        features: enemies.filter((e) => e.alive)
+          .map((e) => ({ e, dist: Math.hypot(e.x - player.x, e.y - player.y) }))
+          .filter((o) => hasLineOfSight(player.x, player.y, o.e.x, o.e.y))
+          .map((o) => ({
+            type: "Feature",
+            properties: { size: Math.min(8, (2.8 * 1.5 * H) / (80 * Math.max(1.5, o.dist))) },
+            geometry: { type: "Point", coordinates: toLngLat(o.e.x, o.e.y) },
+          })),
+      };
+    };
 
     // ---------------------------------------------------------------------
     // Player state (metres + heading in radians; 0 = +x / east).
@@ -187,6 +196,17 @@
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
       if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
       return MAZE[r][c] === "#";
+    };
+
+    // Is the straight line between two points clear of walls? Used to hide
+    // enemies that are behind walls (symbols don't depth-test vs extrusions).
+    const hasLineOfSight = (x0, y0, x1, y1) => {
+      const steps = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (CELL * 0.3));
+      for (let i = 1; i < steps; i++) {
+        const t = i / steps;
+        if (isWall(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return false;
+      }
+      return true;
     };
 
     // ---------------------------------------------------------------------
@@ -223,7 +243,7 @@
             id: "enemies", type: "symbol", source: "enemies",
             layout: {
               "icon-image": "enemy",
-              "icon-size": 0.8,
+              "icon-size": ["get", "size"],
               "icon-anchor": "bottom",
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
@@ -385,6 +405,10 @@
 
         updateCamera();
         drawMinimap();
+        if (ticks % 4 === 0) {                       // refresh enemy LOS/size
+          const es = map.getSource("enemies");
+          if (es) es.setData(enemiesGeoJSON());
+        }
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
