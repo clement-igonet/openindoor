@@ -180,25 +180,26 @@
       }
       far.type = "boss"; far.hp = TYPES.boss.hp[DIFF];
     }
-    // Enemies as depth-tested 3D figures (a body box + a head box) so the walls
-    // occlude them correctly. Symbol billboards always draw on top of WebGL
-    // extrusions and can't be occluded — that's why they showed through walls.
-    const sq = (cx, cy, h) => [[
-      toLngLat(cx - h, cy - h), toLngLat(cx + h, cy - h),
-      toLngLat(cx + h, cy + h), toLngLat(cx - h, cy + h), toLngLat(cx - h, cy - h),
-    ]];
-    const enemiesGeoJSON = () => ({
-      type: "FeatureCollection",
-      features: enemies.filter((e) => e.alive).flatMap((e) => {
-        const t = TYPES[e.type];
-        return [
-          { type: "Feature", properties: { color: t.color, base: 0, height: t.body },
-            geometry: { type: "Polygon", coordinates: sq(e.x, e.y, t.w) } },
-          { type: "Feature", properties: { color: t.head, base: t.body, height: t.body + 0.7 },
-            geometry: { type: "Polygon", coordinates: sq(e.x, e.y, t.w * 0.55) } },
-        ];
-      }),
-    });
+    // Enemies as billboard sprites (the original guard art). MapLibre symbols
+    // can't depth-test against the 3D walls, so we cull by line-of-sight (to
+    // hide enemies in other rooms) and scale by distance for pseudo-perspective.
+    const enemiesGeoJSON = () => {
+      const H = window.innerHeight || 800;
+      return {
+        type: "FeatureCollection",
+        features: enemies.filter((e) => e.alive)
+          .filter((e) => hasLineOfSight(player.x, player.y, e.x, e.y))
+          .map((e) => {
+            const dist = Math.hypot(e.x - player.x, e.y - player.y);
+            const scale = TYPES[e.type].w / 0.8;            // brute/boss bigger
+            return {
+              type: "Feature",
+              properties: { size: Math.min(9, (2.8 * 1.5 * H) / (128 * Math.max(1.5, dist))) * scale },
+              geometry: { type: "Point", coordinates: toLngLat(e.x, e.y) },
+            };
+          }),
+      };
+    };
 
     // ---------------------------------------------------------------------
     // Player state (metres + heading in radians; 0 = +x / east).
@@ -269,11 +270,15 @@
             },
           },
           {
-            id: "enemies", type: "fill-extrusion", source: "enemies",
-            paint: {
-              "fill-extrusion-color": ["get", "color"],
-              "fill-extrusion-height": ["get", "height"],
-              "fill-extrusion-base": ["get", "base"],
+            id: "enemies", type: "symbol", source: "enemies",
+            layout: {
+              "icon-image": "guard",
+              "icon-size": ["get", "size"],
+              "icon-anchor": "bottom",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-pitch-alignment": "viewport",
+              "icon-rotation-alignment": "viewport",
             },
           },
         ],
@@ -451,6 +456,10 @@
 
         updateCamera();
         drawMinimap();
+        if (ticks % 4 === 0) {                       // refresh enemy LOS/size
+          const es = map.getSource("enemies");
+          if (es) es.setData(enemiesGeoJSON());
+        }
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
@@ -526,6 +535,7 @@
       stone: "walls/000.png", crackstone: "walls/002.png", steel: "walls/012.png",
       wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
       moss:  "walls/030.png", cave:  "walls/032.png",
+      guard: "enemies/guard_0.png",
     };
     const loadingTex = new Set();
     map.on("styleimagemissing", (e) => {
