@@ -262,6 +262,7 @@
     };
     // Cropped guard sprite is 44×106 px (the figure fills the frame).
     const GW = 44, GH = 106, ASPECT = GW / GH;
+    const SIGHT = 52;   // metres: draw / allow hitting enemies out to here
     // Enemies come straight from the ACTOR characters in the level.
     const enemies = [];
     for (let r = 0; r < ROWS; r++) {
@@ -281,12 +282,23 @@
     // rectangle is reused for hit detection.
     const spriteLayer = document.getElementById("sprites");
 
+    // Eye-level (horizon) screen Y: a far ground point projects onto it. For a
+    // no-roll camera it's a single horizontal line, so any far point works. We
+    // pin each enemy's HEAD relative to it, which is the key to stable framing:
+    // a 1.75 m head sits exactly on the horizon (≈ the crosshair) at EVERY
+    // distance, so walking closer drops the FEET rather than raising the head.
+    function horizonScreenY() {
+      const f = map.project(toLngLat(player.x + Math.cos(player.heading) * 4000,
+                                     player.y + Math.sin(player.heading) * 4000));
+      return f.y;
+    }
+
     // Returns the enemy's drawn rectangle in CSS px {x,y,w,h,dist}, or null if
     // it must not be shown (too far, behind us, or hidden behind a wall).
-    function spriteRect(e) {
+    function spriteRect(e, horizonY) {
       const dx = e.x - player.x, dy = e.y - player.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < 0.001 || dist > 46) return null;
+      if (dist < 0.001 || dist > SIGHT) return null;
       const ad = Math.atan2(dy, dx) - player.heading;                 // skip behind us
       if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) return null;
       if (!hasLineOfSight(player.x, player.y, e.x, e.y)) return null;
@@ -297,12 +309,17 @@
       const side = map.project(toLngLat(e.x + sx, e.y + sy));
       const pxPerM = Math.hypot(side.x - feet.x, side.y - feet.y);
       if (!isFinite(pxPerM) || pxPerM <= 0) return null;
-      const h = pxPerM * TYPES[e.type].h, w = h * ASPECT;
-      return { x: feet.x - w / 2, y: feet.y - h, w, h, dist };
+      // Head pinned to the horizon, raised/lowered by (height − eye height).
+      // A guard (1.75 m = eye) → head exactly on the horizon; a brute (2.3 m)
+      // → above it; feet stay on the exact ground projection.
+      const headY = horizonY - (TYPES[e.type].h - EYE_H) * pxPerM;
+      const h = Math.max(1, feet.y - headY), w = h * ASPECT;
+      return { x: feet.x - w / 2, y: headY, w, h, dist };
     }
 
     // Reposition / resize / depth-sort every enemy's <img> each frame.
     function updateSprites() {
+      const horizonY = horizonScreenY();
       for (const e of enemies) {
         if (!e._el) {
           const img = document.createElement("img");
@@ -312,7 +329,7 @@
           e._el = img;
         }
         const el = e._el;
-        const r = e.alive ? spriteRect(e) : null;
+        const r = e.alive ? spriteRect(e, horizonY) : null;
         if (!r) { el.style.display = "none"; continue; }
         el.style.display = "block";
         el.style.left = r.x.toFixed(1) + "px";
@@ -337,6 +354,14 @@
       const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
       if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
       return at(r, c) in WALL_TEX;
+    };
+    // Enemies block the player like soft pillars, so you can't walk into one and
+    // have its billboard balloon across the screen — you stop ~2 m away.
+    const ENEMY_R = 1.0;
+    const enemyBlocks = (x, y) => {
+      for (const e of enemies)
+        if (e.alive && Math.hypot(e.x - x, e.y - y) < RADIUS + ENEMY_R) return true;
+      return false;
     };
 
     // Is the straight line between two points clear of walls? Grid DDA
@@ -468,10 +493,11 @@
       // you see is exactly what you can hit. Nearest visible enemy wins.
       const cv = map.getCanvas();
       const ccx = cv.clientWidth / 2, ccy = cv.clientHeight / 2;     // crosshair pixel
+      const horizonY = horizonScreenY();
       let best = null, bestDist = 1e9, near = null, nearD = 1e9, nearOn = false;
       for (const e of enemies) {
         if (!e.alive) continue;
-        const r = spriteRect(e);                                     // null if hidden
+        const r = spriteRect(e, horizonY);                           // null if hidden
         if (!r) continue;
         const on = ccx >= r.x && ccx <= r.x + r.w && ccy >= r.y && ccy <= r.y + r.h;
         if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
@@ -537,13 +563,15 @@
         const nx = player.x + dx, px = nx + Math.sign(dx) * RADIUS;
         if (!isWall(px, player.y) &&
             !isWall(px, player.y - RADIUS) &&
-            !isWall(px, player.y + RADIUS)) player.x = nx;
+            !isWall(px, player.y + RADIUS) &&
+            !enemyBlocks(nx, player.y)) player.x = nx;
       }
       if (dy !== 0) {
         const ny = player.y + dy, py = ny + Math.sign(dy) * RADIUS;
         if (!isWall(player.x, py) &&
             !isWall(player.x - RADIUS, py) &&
-            !isWall(player.x + RADIUS, py)) player.y = ny;
+            !isWall(player.x + RADIUS, py) &&
+            !enemyBlocks(player.x, ny)) player.y = ny;
       }
     }
     function tryStep(dx, dy) {
