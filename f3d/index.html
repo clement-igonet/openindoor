@@ -411,6 +411,7 @@
     const weaponImg = document.getElementById("weaponimg");
     const hitmark = document.getElementById("hitmark");
     let canFire = true;
+    let aim = "";          // HUD diagnostic for the last shot
     const SHOT_DMG = 50;   // damage per shot
     function fire() {
       if (!canFire) return;
@@ -425,12 +426,14 @@
       // Hit only the nearest enemy the crosshair is actually ON: the angular
       // offset must fall within the enemy's own angular half-width (which grows
       // as it gets closer / bigger on screen). No wide "cone".
-      let best = null, bestDist = 1e9;
+      let best = null, bestDist = 1e9, near = null, nearD = 1e9;
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.x - player.x, dy = e.y - player.y;
         const dist = Math.hypot(dx, dy);
-        if (dist < 0.01 || dist >= bestDist) continue;
+        if (dist < 0.01) continue;
+        if (dist < nearD) { nearD = dist; near = { e, dx, dy, dist }; }
+        if (dist >= bestDist) continue;
         const ang = Math.atan2(dy, dx);
         const d = ang - player.heading;                    // robust angle diff in [0, π]
         const off = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
@@ -443,6 +446,13 @@
           bestDist = dist; best = e;
         }
       }
+      if (near) {                                          // HUD diagnostic
+        const a = Math.atan2(near.dy, near.dx) - player.heading;
+        const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) * 57.3;
+        const half = Math.max(0.09, Math.atan2(TYPES[near.e.type].w * 1.4, near.dist)) * 57.3;
+        const los = hasLineOfSight(player.x, player.y, near.e.x, near.e.y) ? 1 : 0;
+        aim = (best ? "HIT" : "MISS") + ` ${near.e.type} d${near.dist.toFixed(1)} off${off.toFixed(0)}/${half.toFixed(0)} los${los}`;
+      } else aim = "no enemy";
       if (best) {
         best.hp -= SHOT_DMG;
         if (best.hp <= 0) {                                // kill + remove FIRST
@@ -626,6 +636,7 @@
             " brg " + map.getBearing().toFixed(0) + "°" +
             " pitch " + map.getPitch().toFixed(0) + "°" +
             "  |  keys [" + pressed.join(" ") + "] loop " + ticks +
+            "  |  " + aim +
             (lastError ? "  ERR " + lastError : "");
         }
       } catch (e) {
