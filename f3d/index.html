@@ -50,6 +50,7 @@
   <div id="hud">
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
     <canvas id="minimap" style="position:absolute;top:8px;right:8px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
+    <div id="hitmark" style="position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border:3px solid #ff4d4d;border-radius:50%;opacity:0;transition:opacity .04s;pointer-events:none;"></div>
     <div id="weapon" style="position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);pointer-events:none;transition:transform .07s ease-out;">
       <img id="weaponimg" src="weapon/bereta_04.png" alt="" style="display:block;width:380px;height:auto;image-rendering:pixelated;" />
     </div>
@@ -262,6 +263,14 @@
             },
           },
           {
+            id: "ceiling", type: "fill-extrusion", source: "floor",
+            paint: {
+              "fill-extrusion-color": "#23232b",
+              "fill-extrusion-base": WALL_H,
+              "fill-extrusion-height": WALL_H + 0.4,
+            },
+          },
+          {
             id: "enemies", type: "symbol", source: "enemies",
             layout: {
               "icon-image": "guard",
@@ -300,6 +309,7 @@
     // enemy roughly under the crosshair (within range/angle) drops.
     const weaponEl = document.getElementById("weapon");
     const weaponImg = document.getElementById("weaponimg");
+    const hitmark = document.getElementById("hitmark");
     let canFire = true;
     const SHOT_DMG = 50;   // damage per shot
     function fire() {
@@ -312,25 +322,30 @@
         weaponImg.src = "weapon/bereta_04.png";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
-      let best = null, bestDist = 200;            // metres (whole level in range)
+      // Hit only the nearest enemy the crosshair is actually ON: the angular
+      // offset must fall within the enemy's own angular half-width (which grows
+      // as it gets closer / bigger on screen). No wide "cone".
+      let best = null, bestDist = 1e9;
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.x - player.x, dy = e.y - player.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > bestDist || dist < 0.01) continue;
+        if (dist < 0.01 || dist >= bestDist) continue;
         const ang = Math.atan2(dy, dx);
         const off = Math.abs(((ang - player.heading + Math.PI) % (2 * Math.PI)) - Math.PI);
-        if (off >= 0.22) continue;                // outside the aim cone
-        // line of sight to ANY part of the enemy's ~1.6 m width (so a clear
-        // shot connects even if the exact centre grazes a doorframe)
-        const px = (-dy / dist) * 0.7, py = (dx / dist) * 0.7;
-        const vis = hasLineOfSight(player.x, player.y, e.x, e.y) ||
-                    hasLineOfSight(player.x, player.y, e.x + px, e.y + py) ||
-                    hasLineOfSight(player.x, player.y, e.x - px, e.y - py);
-        if (vis) { bestDist = dist; best = e; }
+        const half = Math.atan2(TYPES[e.type].w, dist);   // enemy's angular half-width
+        if (off > half) continue;                          // crosshair not on its pixels
+        const nx = (-dy / dist) * TYPES[e.type].w, ny = (dx / dist) * TYPES[e.type].w;
+        if (hasLineOfSight(player.x, player.y, e.x, e.y) ||
+            hasLineOfSight(player.x, player.y, e.x + nx, e.y + ny) ||
+            hasLineOfSight(player.x, player.y, e.x - nx, e.y - ny)) {
+          bestDist = dist; best = e;
+        }
       }
       if (best) {
         best.hp -= SHOT_DMG;
+        hitmark.style.opacity = "1";                       // feedback: shot landed
+        setTimeout(() => { hitmark.style.opacity = "0"; }, 110);
         if (best.hp <= 0) {
           best.alive = false;
           const s = map.getSource("enemies");
@@ -375,7 +390,7 @@
     const TURN = 2.4;    // rad/s
     let last = 0;
 
-    function tryStep(dx, dy) {
+    function stepAxis(dx, dy) {
       // Resolve each axis separately, probing the player's FULL width (3 points
       // across the leading edge) so you can't corner-cut or pass through walls.
       if (dx !== 0) {
@@ -390,6 +405,11 @@
             !isWall(player.x - RADIUS, py) &&
             !isWall(player.x + RADIUS, py)) player.y = ny;
       }
+    }
+    function tryStep(dx, dy) {
+      // Sub-step so fast movement can never tunnel through a wall in one frame.
+      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (RADIUS * 0.5)));
+      for (let i = 0; i < n; i++) stepAxis(dx / n, dy / n);
     }
 
     const dbg = document.getElementById("debug");
