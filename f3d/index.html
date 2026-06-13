@@ -49,6 +49,7 @@
 
   <div id="hud">
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
+    <canvas id="minimap" style="position:absolute;top:8px;right:8px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
     <div id="controls">
       <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> / <b>mouse·trackpad</b> turn &nbsp;·&nbsp; <b>Esc</b> release
     </div>
@@ -247,6 +248,36 @@
     }
 
     const dbg = document.getElementById("debug");
+
+    // Mini-map (top-down view of the maze + player) -----------------------
+    const mini = document.getElementById("minimap");
+    const mctx = mini.getContext("2d");
+    const MCELL = 9;                 // pixels per grid cell on the minimap
+    mini.width = COLS * MCELL;
+    mini.height = ROWS * MCELL;
+    function drawMinimap() {
+      mctx.clearRect(0, 0, mini.width, mini.height);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          mctx.fillStyle = MAZE[r][c] === "#" ? "#8a8a8a" : "#1d1d22";
+          mctx.fillRect(c * MCELL, r * MCELL, MCELL - 1, MCELL - 1);
+        }
+      }
+      const px = (player.x / CELL) * MCELL;
+      const py = (player.y / CELL) * MCELL;
+      mctx.strokeStyle = "#ffd23f";
+      mctx.lineWidth = 2;
+      mctx.beginPath();
+      mctx.moveTo(px, py);
+      mctx.lineTo(px + Math.cos(player.heading) * MCELL * 1.8,
+                  py + Math.sin(player.heading) * MCELL * 1.8);
+      mctx.stroke();
+      mctx.fillStyle = "#ffd23f";
+      mctx.beginPath();
+      mctx.arc(px, py, 2.5, 0, Math.PI * 2);
+      mctx.fill();
+    }
+
     let ticks = 0;
     function frame(t) {
       try {
@@ -269,6 +300,7 @@
         if (dx || dy) tryStep(dx, dy);
 
         updateCamera();
+        drawMinimap();
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
