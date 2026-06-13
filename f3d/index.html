@@ -97,8 +97,10 @@
     // ---------------------------------------------------------------------
     const CELL   = 4;     // metres per grid cell
     const WALL_H = 16;    // wall height (metres) — tall walls for an enclosed feel
-    const EYE    = 2.5;   // camera/eye height (metres) — low for a near-horizontal view
+    const EYE_H  = 5;     // eye height (metres)
+    const PITCH  = 85;    // camera pitch (deg from nadir); 85 ≈ near-horizontal, = maxPitch
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
+    const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
@@ -203,21 +205,28 @@
     });
 
     // ---------------------------------------------------------------------
-    // Camera: eye at the player; look toward a point far down the heading at
-    // ground level. With the eye only a few metres up and the target ~km away,
-    // the look is ≈ horizontal (clamped to maxPitch = 85°). We avoid
-    // setPitchBearing — it doesn't exist in this MapLibre build and crashed the
-    // loop. Wrapped in try/catch so a camera hiccup never kills input.
+    // Camera (MapLibre standard camera — there is NO free camera API).
+    // To fake a first-person eye: MapLibre orbits around `center` (a ground
+    // point) with the eye sitting `D·sin(pitch)` behind and `D·cos(pitch)` above
+    // it, where D (eye→center distance) is fixed by zoom + viewport. So we place
+    // `center` that same distance AHEAD of the player and pick the zoom that
+    // makes the eye land at EYE_H. Result: the eye is at the player, looking
+    // along the heading; turning rotates the look point around the fixed eye.
+    //   bearing = compass dir of forward = atan2(east, north) = atan2(cos h, sin h)
     // ---------------------------------------------------------------------
+    const PR = PITCH * Math.PI / 180;
     let lastError = "";
     function updateCamera() {
       try {
-        const cam = map.getFreeCameraOptions();
-        cam.position = maplibregl.MercatorCoordinate.fromLngLat(toLngLat(player.x, player.y), EYE);
-        const tx = player.x + Math.cos(player.heading) * 3000;
-        const ty = player.y + Math.sin(player.heading) * 3000;
-        cam.lookAtPoint(toLngLat(tx, ty));
-        map.setFreeCameraOptions(cam);
+        const H = map.getCanvas().clientHeight || 800;
+        const D = EYE_H / Math.cos(PR);            // eye→center distance (m)
+        const mpp = D / (1.5 * H);                 // metres/pixel (fov ≈ 36.9° → 1.5·H px)
+        const zoom = Math.log2(EARTH / (512 * mpp));
+        const off = D * Math.sin(PR);              // place center this far ahead (m)
+        const cx = player.x + Math.cos(player.heading) * off;
+        const cy = player.y + Math.sin(player.heading) * off;
+        const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
+        map.jumpTo({ center: toLngLat(cx, cy), bearing, pitch: PITCH, zoom });
       } catch (err) {
         lastError = String(err && err.message || err);
       }
