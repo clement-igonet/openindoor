@@ -50,18 +50,8 @@
   <div id="hud">
     <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
     <canvas id="minimap" style="position:absolute;top:8px;right:8px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
-    <div id="weapon" style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);pointer-events:none;transition:transform .06s ease-out;">
-      <div id="flash" style="position:absolute;left:50%;top:-26px;transform:translateX(-50%);width:130px;height:130px;border-radius:50%;background:radial-gradient(circle,rgba(255,235,140,.95),rgba(255,170,40,.55) 40%,transparent 70%);opacity:0;transition:opacity .04s;"></div>
-      <svg viewBox="0 0 240 180" width="360" height="270" aria-hidden="true">
-        <rect x="103" y="14" width="13" height="120" fill="#2b2b2f"/>
-        <rect x="119" y="14" width="13" height="120" fill="#3a3a40"/>
-        <rect x="99" y="8" width="40" height="12" rx="3" fill="#17171a"/>
-        <rect x="90" y="92" width="58" height="30" rx="10" fill="#6b4a2b"/>
-        <rect x="90" y="96" width="58" height="5" fill="#85602f"/>
-        <rect x="96" y="120" width="48" height="50" rx="6" fill="#24242a"/>
-        <ellipse cx="116" cy="120" rx="36" ry="20" fill="#c79f79"/>
-        <ellipse cx="116" cy="120" rx="36" ry="20" fill="none" stroke="#9a7550" stroke-width="2"/>
-      </svg>
+    <div id="weapon" style="position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);pointer-events:none;transition:transform .07s ease-out;">
+      <img id="weaponimg" src="weapon/bereta_idle.png" alt="" style="display:block;width:380px;height:auto;image-rendering:pixelated;" />
     </div>
     <div id="controls">
       <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> turn &nbsp;·&nbsp; <b>Alt + ← →</b> strafe &nbsp;·&nbsp; <b>Space</b> shoot &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>Esc</b> release
@@ -312,17 +302,17 @@
     // Shooting: Space fires — muzzle flash + recoil, and the nearest living
     // enemy roughly under the crosshair (within range/angle) drops.
     const weaponEl = document.getElementById("weapon");
-    const flashEl = document.getElementById("flash");
+    const weaponImg = document.getElementById("weaponimg");
     let canFire = true;
-    const SHOT_DMG = 50;   // shotgun damage per shot
+    const SHOT_DMG = 50;   // damage per shot
     function fire() {
       if (!canFire) return;
       canFire = false;
       setTimeout(() => { canFire = true; }, 420);
-      flashEl.style.opacity = "1";
-      weaponEl.style.transform = "translateX(-50%) translateY(24px)";
+      weaponImg.src = "weapon/bereta_fire.png";
+      weaponEl.style.transform = "translateX(-50%) translateY(22px)";
       setTimeout(() => {
-        flashEl.style.opacity = "0";
+        weaponImg.src = "weapon/bereta_idle.png";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
       let best = null, bestDist = 200;            // metres (whole level in range)
