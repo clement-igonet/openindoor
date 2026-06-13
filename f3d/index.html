@@ -273,10 +273,16 @@
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
             .filter((k) => keys[k]);
-          dbg.textContent = "loop " + ticks +
-            " · pos " + player.x.toFixed(1) + "," + player.y.toFixed(1) +
-            " · pitch " + (map.getPitch ? map.getPitch().toFixed(0) : "?") +
-            " · keys [" + pressed.join(" ") + "]" + (lastError ? " · ERR " + lastError : "");
+          const c = map.getCenter();
+          dbg.textContent =
+            "player " + player.x.toFixed(1) + "," + player.y.toFixed(1) + "m" +
+            " hd " + ((player.heading * 180 / Math.PI) % 360).toFixed(0) + "°" +
+            "  |  cam.center " + (c.lng / DEG).toFixed(1) + "," + (c.lat / DEG).toFixed(1) + "m" +
+            " z" + map.getZoom().toFixed(2) +
+            " brg " + map.getBearing().toFixed(0) + "°" +
+            " pitch " + map.getPitch().toFixed(0) + "°" +
+            "  |  keys [" + pressed.join(" ") + "] loop " + ticks +
+            (lastError ? "  ERR " + lastError : "");
         }
       } catch (e) {
         lastError = String(e && e.message || e);
