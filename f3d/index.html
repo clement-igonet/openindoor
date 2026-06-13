@@ -165,22 +165,22 @@
         }
       }
     }
-    // Only enemies with line-of-sight (so none show through walls), sized by
-    // distance so they read as ~2.8 m figures (symbols don't depth-scale alone).
-    const enemiesGeoJSON = () => {
-      const H = window.innerHeight || 800;
-      return {
-        type: "FeatureCollection",
-        features: enemies.filter((e) => e.alive)
-          .map((e) => ({ e, dist: Math.hypot(e.x - player.x, e.y - player.y) }))
-          .filter((o) => hasLineOfSight(player.x, player.y, o.e.x, o.e.y))
-          .map((o) => ({
-            type: "Feature",
-            properties: { size: Math.min(8, (2.8 * 1.5 * H) / (80 * Math.max(1.5, o.dist))) },
-            geometry: { type: "Point", coordinates: toLngLat(o.e.x, o.e.y) },
-          })),
-      };
-    };
+    // Enemies as depth-tested 3D figures (a body box + a head box) so the walls
+    // occlude them correctly. Symbol billboards always draw on top of WebGL
+    // extrusions and can't be occluded — that's why they showed through walls.
+    const sq = (cx, cy, h) => [[
+      toLngLat(cx - h, cy - h), toLngLat(cx + h, cy - h),
+      toLngLat(cx + h, cy + h), toLngLat(cx - h, cy + h), toLngLat(cx - h, cy - h),
+    ]];
+    const enemiesGeoJSON = () => ({
+      type: "FeatureCollection",
+      features: enemies.filter((e) => e.alive).flatMap((e) => [
+        { type: "Feature", properties: { color: "#566b3f", base: 0,   height: 2.0 },
+          geometry: { type: "Polygon", coordinates: sq(e.x, e.y, 0.8) } },
+        { type: "Feature", properties: { color: "#caa07a", base: 2.0, height: 2.7 },
+          geometry: { type: "Polygon", coordinates: sq(e.x, e.y, 0.45) } },
+      ]),
+    });
 
     // ---------------------------------------------------------------------
     // Player state (metres + heading in radians; 0 = +x / east).
@@ -251,15 +251,11 @@
             },
           },
           {
-            id: "enemies", type: "symbol", source: "enemies",
-            layout: {
-              "icon-image": "enemy",
-              "icon-size": ["get", "size"],
-              "icon-anchor": "bottom",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-              "icon-pitch-alignment": "viewport",
-              "icon-rotation-alignment": "viewport",
+            id: "enemies", type: "fill-extrusion", source: "enemies",
+            paint: {
+              "fill-extrusion-color": ["get", "color"],
+              "fill-extrusion-height": ["get", "height"],
+              "fill-extrusion-base": ["get", "base"],
             },
           },
         ],
@@ -426,10 +422,6 @@
 
         updateCamera();
         drawMinimap();
-        if (ticks % 4 === 0) {                       // refresh enemy LOS/size
-          const es = map.getSource("enemies");
-          if (es) es.setData(enemiesGeoJSON());
-        }
 
         if (dbg) {
           const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
