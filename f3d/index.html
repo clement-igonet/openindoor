@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>W3D — Wolfenstein-style 3D · OpenIndoor</title>
+  <title>F3D — Festung 3D · OpenIndoor</title>
   <link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
@@ -48,18 +48,20 @@
   <div id="map"></div>
 
   <div id="hud">
+    <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
     <div id="controls">
-      <b>W A S D</b> move &nbsp;·&nbsp; <b>mouse</b> / <b>← →</b> turn &nbsp;·&nbsp; <b>Esc</b> release
+      <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> / <b>mouse·trackpad</b> turn &nbsp;·&nbsp; <b>Esc</b> release
     </div>
   </div>
 
   <div id="overlay">
-    <h1>W3D</h1>
-    <p>A Wolfenstein-style first-person maze, rendered entirely with
+    <h1>F3D</h1>
+    <p><b>Festung 3D</b> — a first-person maze inspired by the legendary
+       early-'90s shooter that defined the genre, rebuilt entirely with
        <a href="https://maplibre.org/" target="_blank" rel="noopener">MapLibre GL</a>'s
        3D extrusion engine and free camera. No raycaster — every wall is a real
        georeferenced building.</p>
-    <p><b>W A S D</b> to move, <b>mouse</b> or <b>arrow keys</b> to turn.</p>
+    <p><b>Arrow keys</b> (or <b>WASD</b>/<b>ZQSD</b>) to move, <b>← →</b> or the <b>mouse</b> to turn.</p>
     <div class="play">▶ Click to play</div>
   </div>
 
@@ -94,13 +96,13 @@
     // meridian, then convert to lng/lat for MapLibre.
     // ---------------------------------------------------------------------
     const CELL   = 4;     // metres per grid cell
-    const WALL_H = 14;    // wall height (metres)
-    const EYE    = 4;     // camera/eye height (metres)
+    const WALL_H = 16;    // wall height (metres) — tall walls for an enclosed feel
+    const EYE    = 2.5;   // camera/eye height (metres) — low for a near-horizontal view
     const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
 
     const toLngLat = (x, y) => [x * DEG, y * DEG];
 
-    // Wolfenstein-ish wall palette, chosen per cell so corridors read clearly.
+    // Retro wall palette, chosen per cell so corridors read clearly.
     const PALETTE = ["#6b6b6b", "#8a8a8a", "#3b5a9b", "#7a3b2e", "#4a7a3b"];
     const wallColor = (r, c) => PALETTE[(r * 3 + c * 7) % PALETTE.length];
 
@@ -156,7 +158,9 @@
     const map = new maplibregl.Map({
       container: "map",
       interactive: false,          // we drive the camera ourselves
-      maxPitch: 85,
+      maxPitch: 85,                // MapLibre's hard ceiling; 85° ≈ near-horizontal
+      pitch: 85,
+      bearing: 0,
       center: toLngLat(player.x, player.y),
       zoom: 20,
       style: {
@@ -199,16 +203,24 @@
     });
 
     // ---------------------------------------------------------------------
-    // Camera: place the eye at the player, look down the heading toward a
-    // far point at eye level (≈ horizontal view).
+    // Camera: eye at the player; look toward a point far down the heading at
+    // ground level. With the eye only a few metres up and the target ~km away,
+    // the look is ≈ horizontal (clamped to maxPitch = 85°). We avoid
+    // setPitchBearing — it doesn't exist in this MapLibre build and crashed the
+    // loop. Wrapped in try/catch so a camera hiccup never kills input.
     // ---------------------------------------------------------------------
+    let lastError = "";
     function updateCamera() {
-      const cam = map.getFreeCameraOptions();
-      cam.position = maplibregl.MercatorCoordinate.fromLngLat(toLngLat(player.x, player.y), EYE);
-      const fx = player.x + Math.cos(player.heading) * 1000;
-      const fy = player.y + Math.sin(player.heading) * 1000;
-      cam.lookAtPoint(toLngLat(fx, fy));
-      map.setFreeCameraOptions(cam);
+      try {
+        const cam = map.getFreeCameraOptions();
+        cam.position = maplibregl.MercatorCoordinate.fromLngLat(toLngLat(player.x, player.y), EYE);
+        const tx = player.x + Math.cos(player.heading) * 3000;
+        const ty = player.y + Math.sin(player.heading) * 3000;
+        cam.lookAtPoint(toLngLat(tx, ty));
+        map.setFreeCameraOptions(cam);
+      } catch (err) {
+        lastError = String(err && err.message || err);
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -225,27 +237,60 @@
       if (!isWall(player.x, ny + Math.sign(dy) * RADIUS)) player.y = ny;
     }
 
+    const dbg = document.getElementById("debug");
+    let ticks = 0;
     function frame(t) {
-      const dt = last ? Math.min(0.05, (t - last) / 1000) : 0;
-      last = t;
+      try {
+        const dt = last ? Math.min(0.05, (t - last) / 1000) : 0;
+        last = t; ticks++;
 
-      if (keys.ArrowLeft)  player.heading += TURN * dt;
-      if (keys.ArrowRight) player.heading -= TURN * dt;
+        // Turn: arrow keys turn (retro-FPS style).
+        if (keys.ArrowLeft)  player.heading += TURN * dt;
+        if (keys.ArrowRight) player.heading -= TURN * dt;
 
-      const fwd = MOVE * dt;
-      const ch = Math.cos(player.heading), sh = Math.sin(player.heading);
-      let dx = 0, dy = 0;
-      if (keys.KeyW) { dx += ch * fwd; dy += sh * fwd; }
-      if (keys.KeyS) { dx -= ch * fwd; dy -= sh * fwd; }
-      if (keys.KeyA) { dx += -sh * fwd; dy += ch * fwd; }   // strafe left
-      if (keys.KeyD) { dx +=  sh * fwd; dy += -ch * fwd; }  // strafe right
-      if (dx || dy) tryStep(dx, dy);
+        // Move. event.code is physical-position based, so KeyW/A/S/D map to the
+        // same physical keys on QWERTY (WASD) and AZERTY (ZQSD).
+        const fwd = MOVE * dt;
+        const ch = Math.cos(player.heading), sh = Math.sin(player.heading);
+        let dx = 0, dy = 0;
+        if (keys.KeyW || keys.ArrowUp)   { dx += ch * fwd; dy += sh * fwd; }
+        if (keys.KeyS || keys.ArrowDown) { dx -= ch * fwd; dy -= sh * fwd; }
+        if (keys.KeyA) { dx += -sh * fwd; dy += ch * fwd; }
+        if (keys.KeyD) { dx +=  sh * fwd; dy += -ch * fwd; }
+        if (dx || dy) tryStep(dx, dy);
 
-      updateCamera();
-      requestAnimationFrame(frame);
+        updateCamera();
+
+        if (dbg) {
+          const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
+            .filter((k) => keys[k]);
+          dbg.textContent = "loop " + ticks +
+            " · pos " + player.x.toFixed(1) + "," + player.y.toFixed(1) +
+            " · pitch " + (map.getPitch ? map.getPitch().toFixed(0) : "?") +
+            " · keys [" + pressed.join(" ") + "]" + (lastError ? " · ERR " + lastError : "");
+        }
+      } catch (e) {
+        lastError = String(e && e.message || e);
+      }
+      requestAnimationFrame(frame);   // ALWAYS reschedule — input must never die
     }
 
-    map.on("load", () => { updateCamera(); requestAnimationFrame(frame); });
+    map.on("load", () => { try { map.setMaxPitch(85); } catch (_) {} });
+    requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
+
+    // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
+    // user's actual layout (e.g. "ZQSD" on AZERTY) via the Keyboard Map API.
+    (async () => {
+      try {
+        if (!navigator.keyboard || !navigator.keyboard.getLayoutMap) return;
+        const map = await navigator.keyboard.getLayoutMap();
+        const label = (code, fallback) => (map.get(code) || fallback).toUpperCase();
+        const wasd = ["KeyW", "KeyA", "KeyS", "KeyD"]
+          .map((c, i) => label(c, ["W", "A", "S", "D"][i])).join(" ");
+        const el = document.getElementById("move-keys");
+        if (el) el.textContent = wasd;
+      } catch (_) { /* unsupported — keep default WASD label */ }
+    })();
   </script>
 </body>
 </html>
