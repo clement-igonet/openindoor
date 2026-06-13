@@ -296,16 +296,22 @@
         flashEl.style.opacity = "0";
         weaponEl.style.transform = "translateX(-50%)";
       }, 90);
-      let best = null, bestDist = 22;             // metres
+      let best = null, bestDist = 200;            // metres (whole level in range)
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.x - player.x, dy = e.y - player.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > bestDist) continue;
+        if (dist > bestDist || dist < 0.01) continue;
         const ang = Math.atan2(dy, dx);
         const off = Math.abs(((ang - player.heading + Math.PI) % (2 * Math.PI)) - Math.PI);
-        // within the cone AND not behind a wall (can't shoot through walls)
-        if (off < 0.22 && hasLineOfSight(player.x, player.y, e.x, e.y)) { bestDist = dist; best = e; }
+        if (off >= 0.22) continue;                // outside the aim cone
+        // line of sight to ANY part of the enemy's ~1.6 m width (so a clear
+        // shot connects even if the exact centre grazes a doorframe)
+        const px = (-dy / dist) * 0.7, py = (dx / dist) * 0.7;
+        const vis = hasLineOfSight(player.x, player.y, e.x, e.y) ||
+                    hasLineOfSight(player.x, player.y, e.x + px, e.y + py) ||
+                    hasLineOfSight(player.x, player.y, e.x - px, e.y - py);
+        if (vis) { bestDist = dist; best = e; }
       }
       if (best) {
         best.alive = false;
@@ -444,31 +450,40 @@
       requestAnimationFrame(frame);   // ALWAYS reschedule — input must never die
     }
 
-    // Procedural, original wall textures — generated on demand when MapLibre
-    // asks for a pattern image it doesn't have.
+    // Procedural, original masonry textures — beveled blocks with grout,
+    // edge highlight/shadow and stone grain. Generated on demand.
     function makeTexture(id) {
-      const S = 64;
+      const S = 128, BW = 64, BH = 32, BEV = 4;       // texture + brick size + bevel
       const cv = document.createElement("canvas"); cv.width = cv.height = S;
       const g = cv.getContext("2d");
-      const palettes = {
-        stone: ["#7a7a7a", "#5e5e5e", "#3a3a3a"],
-        brick: ["#9a4e3b", "#7a3b2e", "#2c160f"],
-        blue:  ["#4666ac", "#34508c", "#1a2742"],
-        mossy: ["#647f54", "#4a6440", "#22301b"],
-      };
-      const [light, base, mortar] = palettes[id] || palettes.stone;
-      g.fillStyle = mortar; g.fillRect(0, 0, S, S);   // mortar background
-      const bw = 32, bh = 16;
-      for (let row = 0; row * bh < S; row++) {
-        const off = (row % 2) ? bw / 2 : 0;
-        for (let bx = -bw; bx < S; bx += bw) {
-          const px = bx + off + 1, py = row * bh + 1, w = bw - 2, h = bh - 2;
-          g.fillStyle = base; g.fillRect(px, py, w, h);
-          g.fillStyle = light; g.fillRect(px, py, w, 2);          // top highlight
-          g.fillStyle = mortar; g.fillRect(px, py + h - 2, w, 2); // bottom shade
+      const P = {
+        stone: { base: "#7c7c7c", light: "#a2a2a2", dark: "#4c4c4c", grout: "#2b2b2d" },
+        brick: { base: "#9d4f3c", light: "#c06d54", dark: "#5e2c20", grout: "#231410" },
+        blue:  { base: "#4a69b0", light: "#7090d6", dark: "#293c72", grout: "#141d36" },
+        mossy: { base: "#668155", light: "#88a472", dark: "#3a5030", grout: "#1c281a" },
+      }[id] || { base: "#7c7c7c", light: "#a2a2a2", dark: "#4c4c4c", grout: "#2b2b2d" };
+
+      g.fillStyle = P.grout; g.fillRect(0, 0, S, S);   // grout fills the gaps
+      for (let row = 0; row * BH < S; row++) {
+        const off = (row % 2) ? BW / 2 : 0;
+        for (let bx = -BW; bx < S; bx += BW) {
+          const x = bx + off + 1, y = row * BH + 1, w = BW - 2, h = BH - 2;
+          g.fillStyle = P.base; g.fillRect(x, y, w, h);
+          g.fillStyle = P.light;                          // lit top + left edge
+          g.fillRect(x, y, w, BEV); g.fillRect(x, y, BEV, h);
+          g.fillStyle = P.dark;                           // shadowed bottom + right
+          g.fillRect(x, y + h - BEV, w, BEV); g.fillRect(x + w - BEV, y, BEV, h);
         }
       }
-      return g.getImageData(0, 0, S, S);
+      // stone grain: per-pixel brightness jitter
+      const img = g.getImageData(0, 0, S, S), d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (Math.random() * 30 - 15) | 0;
+        d[i] = Math.max(0, Math.min(255, d[i] + n));
+        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
+        d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
+      }
+      return img;
     }
     // Original enemy sprite (a generic uniformed guard), drawn at runtime.
     function makeEnemyIcon() {
