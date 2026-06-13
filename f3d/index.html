@@ -381,7 +381,7 @@
     // also turns via mousemove above.)
     addEventListener("wheel", (e) => {
       e.preventDefault();
-      player.heading += e.deltaX * 0.004;            // horizontal pan = turn
+      player.heading -= e.deltaX * 0.004;            // horizontal pan = turn
       const step = -e.deltaY * 0.02;                 // vertical pan = forward/back
       if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
     }, { passive: false });
