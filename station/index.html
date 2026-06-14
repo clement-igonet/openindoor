@@ -88,7 +88,8 @@ const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(
 let INDOOR={type:'FeatureCollection',features:[]}, BUILDINGS={type:'FeatureCollection',features:[]};
 let SEL=[], SEL_LEVELS=[0], minLv=0, activeLevel=0, selGroup=null, hoverGroup=null, PICK=null, HOVER=null, GROUP={}, MEMBERS={};
 let selInfo='hover a building', selName='Gare de Lyon', mePlan, planZoom=18, planZoomAdj=0, turnTo=null, WALK=[];
-const player={lng:CENTER[0],lat:CENTER[1],heading:0,pitch:90};   // pitch 85–95: look slightly down/up
+const player={lng:CENTER[0],lat:CENTER[1],heading:0,pitch:90,z:0};   // pitch 85–95: look down/up; z: rise while on an escalator
+let ESC=[], ride=null, rideCool=0, aPhase=0;   // escalator zones / active ride / re-board cooldown / running-band phase
 const compass=()=>Math.atan2(Math.cos(player.heading),Math.sin(player.heading))*180/Math.PI;
 // mobile = coarse pointer OR a narrow window — so a desktop window shrunk below
 // 820px switches to the stepped single-view layout (lets you simulate mobile).
@@ -199,11 +200,64 @@ const POI_H={door:2.2,elevator:2.6,vending_machine:1.8,shop:2.4};
 const poiKind=p=>p.highway==='elevator'?'elevator':p.amenity==='vending_machine'?'vending_machine':p.door?'door':p.shop?'shop':null;
 // h = hovered _src (pale gold), v = selected _src (gold), else by kind
 const poiColor=(h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a',['==',['get','kind'],'elevator'],'#f0b429',['==',['get','kind'],'shop'],'#3fb950',['==',['get','kind'],'door'],'#e8543b','#58a6ff'];
+// escalator (conveying) orange, plain stairs tan; hover pale, selected gold
+const escColor=(h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a',['==',['get','part'],'rail'],'#9fd3e0',['==',['get','esc'],1],'#9aa6b8','#caa46a'];
+// animated "running" band: escalator steps light up where (_phase - ph) mod 1 is small,
+// _phase oriented by travel direction so the band moves up on up-escalators, down on down-escalators
+const escColorAnim=(ph,h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a',['==',['get','part'],'rail'],'#9fd3e0',
+  ['all',['==',['get','esc'],1],['==',['get','part'],'step'],['<',['%',['+',['-',['get','_phase'],['literal',ph]],1],1],0.28]],'#fff0b0',
+  ['==',['get','esc'],1],'#9aa6b8','#caa46a'];
 function poisFC(features){ const out=[], S=0.45, dx=S/M_LON, dy=S/M_LAT;
   for(const f of features){ if(!f.geometry||f.geometry.type!=='Point') continue; const k=poiKind(f.properties); if(!k) continue;
     const [x,y]=f.geometry.coordinates;
     out.push({type:'Feature',properties:{...f.properties,_src:f.properties._id,kind:k,h:POI_H[k]||2.2},
       geometry:{type:'Polygon',coordinates:[[[x-dx,y-dy],[x+dx,y-dy],[x+dx,y+dy],[x-dx,y+dy],[x-dx,y-dy]]]}}); }
+  return {type:'FeatureCollection',features:out}; }
+/* offset a polyline sideways by `off` metres (perpendicular) */
+function lineOffset(ln,off){ const out=[];
+  for(let i=0;i<ln.length;i++){ const a=ln[Math.max(0,i-1)], b=ln[Math.min(ln.length-1,i+1)];
+    const dxm=(b[0]-a[0])*M_LON, dym=(b[1]-a[1])*M_LAT, len=Math.hypot(dxm,dym)||1;
+    out.push([ln[i][0]+(-dym/len*off)/M_LON, ln[i][1]+(dxm/len*off)/M_LAT]); }
+  return out; }
+/* split a polyline into N equal-length sub-segments [a,b] */
+function resample(ln,N){ const cum=[0]; let total=0;
+  for(let i=0;i+1<ln.length;i++){ total+=Math.hypot((ln[i+1][0]-ln[i][0])*M_LON,(ln[i+1][1]-ln[i][1])*M_LAT); cum.push(total); }
+  if(total===0) return [];
+  const at=fr=>{ const d=fr*total; for(let i=0;i+1<ln.length;i++){ if(d<=cum[i+1]||i+2===ln.length){ const t=(d-cum[i])/((cum[i+1]-cum[i])||1); return [ln[i][0]+(ln[i+1][0]-ln[i][0])*t, ln[i][1]+(ln[i+1][1]-ln[i][1])*t]; } } return ln[ln.length-1]; };
+  const out=[]; for(let i=0;i<N;i++) out.push([at(i/N),at((i+1)/N)]); return out; }
+/* escalators & stairs (highway=steps) → a rising staircase (solid stepped
+   treads) flanked by two glass-style side rails. `esc`=1 if conveying.
+   Each piece carries _src (whole run highlights together) + _base/_top. */
+/* nearest mapped level above (d>0) / below (d<0) the active one */
+function nextLevel(d){ const c=SEL_LEVELS.filter(l=>d>0?l>activeLevel:l<activeLevel); return c.length?(d>0?Math.min(...c):Math.max(...c)):null; }
+/* which way does a steps way go, from the level we're on? Prefer its level span
+   (connecting lo↔hi → up from lo, down from hi), else incline/conveying. */
+function escDir(p){
+  const levs=parseLevels(p.level).filter(n=>n>=-6&&n<=4);
+  let goesUp = levs.length>=2 ? (activeLevel < Math.max(...levs)) : (p.incline==='up'?true:p.incline==='down'?false:p.conveying==='backward'?false:true);
+  let target = goesUp?nextLevel(1):nextLevel(-1);
+  if(target==null) target = goesUp?nextLevel(-1):nextLevel(1);
+  return {up: target!=null && target>activeLevel, target};
+}
+const md=(a,b)=>Math.hypot((a.lng-b.lng)*M_LON,(a.lat-b.lat)*M_LAT);
+function distToPolyline(lng,lat,ln){ let m=1e9;
+  for(let i=0;i+1<ln.length;i++){ const ax=(ln[i][0]-lng)*M_LON,ay=(ln[i][1]-lat)*M_LAT,bx=(ln[i+1][0]-lng)*M_LON,by=(ln[i+1][1]-lat)*M_LAT,dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy;
+    let t=L2?-(ax*dx+ay*dy)/L2:0; t=Math.max(0,Math.min(1,t)); const d=Math.hypot(ax+dx*t,ay+dy*t); if(d<m) m=d; }
+  return m; }
+function escalatorsFC(features){ const out=[], W=1.6;
+  for(const f of features){ const p=f.properties; if(p.highway!=='steps'||!f.geometry) continue;
+    const esc=(p.conveying&&p.conveying!=='no')?1:0, up=escDir(p).up;
+    const lines=f.geometry.type==='LineString'?[f.geometry.coordinates]:f.geometry.type==='MultiLineString'?f.geometry.coordinates:[];
+    for(const ln of lines){ if(ln.length<2) continue;
+      let run=0; for(let i=0;i+1<ln.length;i++) run+=Math.hypot((ln[i+1][0]-ln[i][0])*M_LON,(ln[i+1][1]-ln[i][1])*M_LAT);
+      run=run||1; const rise=Math.min(4.5,Math.max(1.5,run*0.5)), N=Math.max(5,Math.min(18,Math.round(run)));
+      // treads: solid steps rising from the floor; _phase oriented by travel direction
+      resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
+        properties:{...p,_src:p._id,esc,part:'step',_phase:up?i/N:1-(i/N),_base:Math.max(0,(i/N)*rise-0.06),_top:((i+1)/N)*rise},geometry:{type:'MultiPolygon',coordinates:q}}); });
+      // two side balustrades (rise with the steps + ~0.95 m handrail)
+      for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
+        properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:(i/N)*rise,_top:((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
+    } }
   return {type:'FeatureCollection',features:out}; }
 
 /* per-level colour ramp (step → tolerates fractional levels; active = white) */
@@ -222,7 +276,7 @@ function buildStack(){ const f=[], idx=new Map(SEL_LEVELS.map((l,i)=>[l,i]));
 const cap=s=>String(s).replace(/_/g,' ');
 function describe(p){
   // a human "kind" so we never just say "feature"
-  const kind = (p.shop&&('Shop'+(p.shop!=='yes'?' · '+cap(p.shop):'')))
+  let kind = (p.shop&&('Shop'+(p.shop!=='yes'?' · '+cap(p.shop):'')))
     || (p.amenity&&cap(p.amenity))
     || (p.highway==='elevator'&&'Elevator')
     || (p.highway==='steps'&&(p.conveying&&p.conveying!=='no'?'Escalator':'Stairs'))
@@ -232,6 +286,8 @@ function describe(p){
     || (p.room&&('Room'+(p.room!=='yes'?' · '+cap(p.room):'')))
     || (p.indoor&&('Indoor '+cap(p.indoor)))
     || 'Feature';
+  if(p.highway==='steps'){ const d=escDir(p), conv=p.conveying&&p.conveying!=='no';
+    kind=(conv?'Escalator ':'Stairs ')+(d.up?'↑ up':'↓ down')+(d.target!=null?' → level '+d.target:''); }
   const title=p.name||p.ref||kind, sub=(p.name&&kind!==title)?kind:'';
   const seen=new Set(['name','ref','kind','h','_id','_src','_lv']);
   const rows=[], order=['shop','amenity','room','indoor','level','repeat_on','highway','conveying','door','entrance','railway','public_transport','network','operator','brand','opening_hours','wheelchair','width','height'];
@@ -276,6 +332,9 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   // FPS — floors + walls (ids for hover highlight)
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
+  // real OpenStreetMap raster as the ground, beneath the indoor floor
+  fps.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
+  fps.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.92}});
   fps.addLayer({id:'floor',type:'fill',source:'indoor',filter:['in',['get','indoor'],['literal',FLOORISH]],
     paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
@@ -285,6 +344,10 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('pois3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'pois3d',type:'fill-extrusion',source:'pois3d',
     paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.96}});
+  // escalators / stairs as rising 3D ramps
+  fps.addSource('esc3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  fps.addLayer({id:'esc-3d',type:'fill-extrusion',source:'esc3d',
+    paint:{'fill-extrusion-color':escColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.97}});
 
   // BUILDINGS — 3D shells, hover/select
   BUILDINGS.features.forEach((f,i)=>f.id=i); computeGroups();
@@ -409,21 +472,45 @@ function selectBuilding(groupId){
   }
   setInfo(selInfo);
 }
-function focusLevel(lv){
+function focusLevel(lv,keepPos){
   if(!SEL_LEVELS.includes(lv)) return;
   activeLevel=lv;
   const fc=levelFC(lv);
   fps.getSource('indoor').setData(fc);
   fps.getSource('walls3d').setData(wallsFC(fc.features,0.5));
   fps.getSource('pois3d').setData(poisFC(fc.features));
+  fps.getSource('esc3d').setData(escalatorsFC(fc.features));
   plan.getSource('level').setData(fc);
   WALK=walkRings(fc.features);
+  // escalator ride-zones for this level (conveying steps only)
+  ESC=fc.features.filter(f=>f.properties.highway==='steps'&&f.geometry).flatMap(f=>{
+    const ls=f.geometry.type==='LineString'?[f.geometry.coordinates]:f.geometry.type==='MultiLineString'?f.geometry.coordinates:[];
+    return ls.filter(l=>l.length>=2).map(ln=>({ln,p:f.properties,esc:(f.properties.conveying&&f.properties.conveying!=='no')?1:0})); });
+  ride=null; rideCool=0.5;
   planZoom=planFollowZoom(); planZoomAdj=0;
-  const sp=spawnInside(fc); player.lng=sp[0]; player.lat=sp[1];
+  if(!keepPos){ const sp=spawnInside(fc); player.lng=sp[0]; player.lat=sp[1]; }
+  player.z=0;
   stk.setPaintProperty('stack','fill-extrusion-color',stackColorExpr());
   PICK=null; HOVER=null; repaint();
   stackInfo(); hud();
 }
+/* place the player on the new level's floor near the escalator landing */
+function landAt(fromPt,toPt){ const ux=toPt.lng-fromPt.lng, uy=toPt.lat-fromPt.lat, L=Math.hypot(ux*M_LON,uy*M_LAT)||1;
+  let lng=toPt.lng+2*ux/L, lat=toPt.lat+2*uy/L;
+  if(!insideWalk(lng,lat)){ lng=toPt.lng; lat=toPt.lat; }
+  if(!insideWalk(lng,lat)) for(let r=1;r<=8;r++){ let hit=false; for(let a=0;a<8;a++){ const ang=a*Math.PI/4, nx=toPt.lng+Math.cos(ang)*r/M_LON, ny=toPt.lat+Math.sin(ang)*r/M_LAT; if(insideWalk(nx,ny)){ lng=nx; lat=ny; hit=true; break; } } if(hit) break; }
+  if(!insideWalk(lng,lat)){ const sp=spawnInside(levelFC(activeLevel)); lng=sp[0]; lat=sp[1]; }
+  player.lng=lng; player.lat=lat; }
+/* board an escalator: ride down quickly, ride up over its full length */
+function startRide(z){ const {up,target}=escDir(z.p); if(target==null) return;
+  const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
+  const board=md(player,a)<md(player,b)?a:b, far=board===a?b:a;
+  ride={from:board,to:far,target,up,t:0,dur:up?Math.max(1.2,md(board,far)/2.2):0.7}; turnTo=null; }
+function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
+  player.lng=ride.from.lng+(ride.to.lng-ride.from.lng)*t; player.lat=ride.from.lat+(ride.to.lat-ride.from.lat)*t;
+  player.z=(ride.up?1:-1)*GAP*t;
+  player.heading=Math.atan2((ride.to.lat-ride.from.lat)*M_LAT,(ride.to.lng-ride.from.lng)*M_LON);
+  if(ride.t>=1){ const tgt=ride.target, fromPt=ride.from, toPt=ride.to; ride=null; rideCool=1.6; focusLevel(tgt,true); landAt(fromPt,toPt); } }
 /* Paint hover (pale gold) + selection (solid gold) across the FPS and plan views.
    The two are independent — hover (cross passing over) NEVER changes the selection
    (PICK). Floor is never recoloured. `pickV` overrides PICK (used by the flash). */
@@ -431,6 +518,7 @@ function paintState(pickV){
   const v=(pickV===undefined?(PICK==null?-1:PICK):pickV), h=(HOVER==null?-2:HOVER);
   fps.setPaintProperty('walls','fill-extrusion-color',['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a','#9aa6b8']);
   fps.setPaintProperty('pois3d','fill-extrusion-color',poiColor(h,v));
+  // esc-3d colour is driven every frame by the running-band animation in frame()
   plan.setPaintProperty('p-area','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#2e6f4e','#34507a']);
   plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#3fb950','#58a6ff']);
   plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#8893a5']);
@@ -516,15 +604,15 @@ function fpsCamera(){
   // keep the eye at the player @ EYE_H and tilt the look-at point up/down with pitch
   const horiz=dWorld*Math.sin(pr);
   const cx=player.lng+Math.cos(player.heading)*horiz/M_LON, cy=player.lat+Math.sin(player.heading)*horiz/M_LAT;
-  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:player.pitch,elevation:EYE_H-dWorld*Math.cos(pr)});
+  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:player.pitch,elevation:EYE_H+(player.z||0)-dWorld*Math.cos(pr)});
 }
 /* highlight + describe the component under the crosshair */
 /* the 3D component (POI marker preferred, then wall) under the crosshair —
    a small box around centre so thin studs are easy to hit; floor is ignored */
 function crossComponent(){
   const cx=fps.getCanvas().clientWidth/2, cy=fps.getCanvas().clientHeight/2, R=9;
-  let fs=[]; try{ fs=fps.queryRenderedFeatures([[cx-R,cy-R],[cx+R,cy+R]],{layers:['walls','pois3d']}); }catch(_){}
-  return fs.find(f=>f.source==='pois3d') || fs.find(f=>f.properties&&f.properties._src!=null) || null;
+  let fs=[]; try{ fs=fps.queryRenderedFeatures([[cx-R,cy-R],[cx+R,cy+R]],{layers:['walls','pois3d','esc-3d']}); }catch(_){}
+  return fs.find(f=>f.source==='pois3d') || fs.find(f=>f.source==='esc3d') || fs.find(f=>f.properties&&f.properties._src!=null) || null;
 }
 /* HOVER: the cross passing over a component → pale highlight + info only.
    Never changes the selection (PICK), so a hover can't remove a selection. */
@@ -545,21 +633,29 @@ function selectUnderCross(){
 let last=0, fc=0;
 function frame(t){
   const dt=last?Math.min(0.05,(t-last)/1000):0; last=t;
+  if(rideCool>0) rideCool-=dt;
   if(flashN>0){ flashAcc+=dt; if(flashAcc>=0.1){ flashAcc=0; flashOn=!flashOn; paintState(flashOn?(PICK==null?-1:PICK):-1); if(--flashN<=0) repaint(); } }
   const activeFps = !MOBILE || step==='fps';
   if(activeFps){
-    if(keys.ArrowLeft) player.heading+=TURN*dt; if(keys.ArrowRight) player.heading-=TURN*dt;
-    const s=MOVE*dt, ch=Math.cos(player.heading), sh=Math.sin(player.heading); let dx=0,dy=0;
-    if(keys.KeyW||keys.ArrowUp){dx+=ch*s;dy+=sh*s;} if(keys.KeyS||keys.ArrowDown){dx-=ch*s;dy-=sh*s;}
-    if(keys.KeyA){dx+=-sh*s;dy+=ch*s;} if(keys.KeyD){dx+=sh*s;dy+=-ch*s;}
-    if(dx||dy||keys.ArrowLeft||keys.ArrowRight) turnTo=null;   // manual input cancels the auto-turn
-    if(dx||dy) tryMove(dx,dy);
-    else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
-      player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
+    if(ride){ advanceRide(dt); }
+    else {
+      if(keys.ArrowLeft) player.heading+=TURN*dt; if(keys.ArrowRight) player.heading-=TURN*dt;
+      const s=MOVE*dt, ch=Math.cos(player.heading), sh=Math.sin(player.heading); let dx=0,dy=0;
+      if(keys.KeyW||keys.ArrowUp){dx+=ch*s;dy+=sh*s;} if(keys.KeyS||keys.ArrowDown){dx-=ch*s;dy-=sh*s;}
+      if(keys.KeyA){dx+=-sh*s;dy+=ch*s;} if(keys.KeyD){dx+=sh*s;dy+=-ch*s;}
+      if(dx||dy||keys.ArrowLeft||keys.ArrowRight) turnTo=null;   // manual input cancels the auto-turn
+      if(dx||dy) tryMove(dx,dy);
+      else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
+        player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
+      if(rideCool<=0) for(const z of ESC){ if(z.esc && distToPolyline(player.lng,player.lat,z.ln)<1.2){ startRide(z); break; } }   // board an escalator
+    }
     fpsCamera();
+    if(ESC.length && (fc%2)===0) fps.setPaintProperty('esc-3d','fill-extrusion-color',escColorAnim(aPhase,HOVER==null?-2:HOVER,PICK==null?-1:PICK));   // running band
+    aPhase=(aPhase+dt*0.6)%1;
     plan.jumpTo({center:[player.lng,player.lat],zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
     if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
-    if((fc++ % 2)===0) lookAt();   // hover detection — responsive
+    if((fc%2)===0) lookAt();   // hover detection — responsive
+    fc++;
   }
   requestAnimationFrame(frame);
 }
