@@ -362,7 +362,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z}});   // raised slab; holes punched for down-escalator wells
+    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z,'fill-extrusion-opacity':0.55}});   // translucent slab so sub-floor (down-escalator) extrusion shows through
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
     paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base']}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
