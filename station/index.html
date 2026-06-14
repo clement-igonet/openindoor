@@ -301,9 +301,8 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   // indoor levels — faint by default, amber on hover, gold when selected
   bldgs.addSource('selectable',{type:'geojson',data:selectablesFC()});
   bldgs.addLayer({id:'selectable-3d',type:'fill-extrusion',source:'selectable',
-    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','sel'],false],'#ffd23f',['boolean',['feature-state','hover'],false],'#e8b84b','#58a6ff'],
-      'fill-extrusion-opacity':['case',['boolean',['feature-state','sel'],false],0.4,['boolean',['feature-state','hover'],false],0.32,0.12],
-      'fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
+    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','sel'],false],'#ffd23f',['boolean',['feature-state','hover'],false],'#e8b84b','#4a6fa5'],
+      'fill-extrusion-opacity':0.35,'fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});   // opacity must be fixed (not data-driven)
 
   // STACK — exploded clickable levels
   // shell plate = the selected building's footprint (same gold shape as the
