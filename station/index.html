@@ -154,6 +154,26 @@ function indoorLevelsOf(groupId){ const feat=BUILDINGS.features[groupId]; if(!fe
   for(const f of INDOOR.features){ if(!f.geometry) continue; const pt=repPoint(f.geometry); if(!inBbox(pt,bb)) continue;
     for(const n of parseLevels(f.properties.level)) if(n>=-6&&n<=4) set.add(n); }
   return set.size; }
+const _lvCache={};
+const groupHasLevels=g=>{ if(g==null) return false; if(_lvCache[g]===undefined) _lvCache[g]=indoorLevelsOf(g)>0; return _lvCache[g]; };
+/* convex hull (monotone chain) → a single "bounding building" for a group */
+function convexHull(pts){ if(pts.length<3) return pts.slice();
+  const p=pts.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]), cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+  const lo=[]; for(const q of p){ while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],q)<=0) lo.pop(); lo.push(q); }
+  const hi=[]; for(let i=p.length-1;i>=0;i--){ const q=p[i]; while(hi.length>=2&&cross(hi[hi.length-2],hi[hi.length-1],q)<=0) hi.pop(); hi.push(q); }
+  lo.pop(); hi.pop(); return lo.concat(hi); }
+function buildingPoints(groupId){ const pts=[]; let maxH=0;
+  for(const id of (MEMBERS[groupId]||[groupId])){ const f=BUILDINGS.features[id]; if(!f||!f.geometry) continue; const p=f.properties;
+    const h=p.height?+p.height:(p['building:levels']?+p['building:levels']*3.2:9); if(h>maxH) maxH=h;
+    const g=f.geometry, rings=g.type==='Polygon'?g.coordinates:g.type==='MultiPolygon'?[].concat(...g.coordinates):[];
+    for(const r of rings) for(const c of r) pts.push(c); }
+  return {pts, maxH:maxH||12}; }
+function updateSelBound(){ const src=bldgs.getSource('selbound'); if(!src) return;
+  if(selGroup==null){ src.setData({type:'FeatureCollection',features:[]}); return; }
+  const {pts,maxH}=buildingPoints(selGroup), hull=convexHull(pts);
+  if(hull.length<3){ src.setData({type:'FeatureCollection',features:[]}); return; }
+  hull.push(hull[0]);
+  src.setData({type:'Feature',properties:{h:maxH},geometry:{type:'Polygon',coordinates:[hull]}}); }
 
 /* OSM `indoor=wall` are zero-width ways and room/shop outlines are thin rings;
    buffer them into solid quads (≈0.5 m thick) so they read as real walls in the
@@ -189,7 +209,13 @@ function poisFC(features){ const out=[], S=0.45, dx=S/M_LON, dy=S/M_LAT;
 const STACK_PAL=['#5470c6','#3fb1e3','#37c79a','#6fd45a','#c4e34a','#f6c343','#f0883e','#e8543b','#d6457f','#9a5bd6'];
 const palRamp=()=>{ if(SEL_LEVELS.length<2) return STACK_PAL[0]; const e=['step',['get','_lv'],STACK_PAL[0]]; for(let k=1;k<SEL_LEVELS.length;k++) e.push(SEL_LEVELS[k],STACK_PAL[k%STACK_PAL.length]); return e; };
 const stackColorExpr=()=>['case',['==',['get','_lv'],['literal',activeLevel]],'#ffffff',palRamp()];
-function buildStack(){ const f=[]; for(const x of floorsOf(SEL)) for(const lv of parseLevels(x.properties.level)) f.push({type:'Feature',properties:{_lv:lv},geometry:x.geometry}); return {type:'FeatureCollection',features:f}; }
+// each level is a solid block filling its storey (contiguous by level index,
+// small seam between) so the stack reads as a filled building volume
+function buildStack(){ const f=[], idx=new Map(SEL_LEVELS.map((l,i)=>[l,i]));
+  for(const x of floorsOf(SEL)) for(const lv of parseLevels(x.properties.level)){
+    const i=idx.has(lv)?idx.get(lv):0, base=i*GAP, top=base+GAP*0.88;
+    f.push({type:'Feature',properties:{_lv:lv,_base:base,_top:top},geometry:x.geometry}); }
+  return {type:'FeatureCollection',features:f}; }
 
 /* describe an indoor component for hover/click info */
 const cap=s=>String(s).replace(/_/g,' ');
@@ -261,12 +287,19 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
 
   // BUILDINGS — 3D shells, hover/select
   BUILDINGS.features.forEach((f,i)=>f.id=i); computeGroups();
+  // real OpenStreetMap raster as the ground under the 3D shells
+  bldgs.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
+  bldgs.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.85}});
   bldgs.addSource('buildings',{type:'geojson',data:BUILDINGS});
   bldgs.addLayer({id:'buildings-3d',type:'fill-extrusion',source:'buildings',filter:['any',['has','building'],['has','building:part']],
-    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','sel'],false],'#ffd23f',['boolean',['feature-state','hover'],false],'#e8b84b',
+    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','hover'],false],'#e8b84b',
         ['==',['get','building'],'train_station'],'#b8643c',['has','building:part'],'#8a93a3','#6b7585'],
       'fill-extrusion-height':['case',['has','height'],['to-number',['get','height']],['has','building:levels'],['*',['to-number',['get','building:levels']],3.2],9],
       'fill-extrusion-base':['case',['has','min_height'],['to-number',['get','min_height']],0],'fill-extrusion-opacity':0.9}});
+  // selected group shown as ONE translucent "bounding building" (convex hull, tallest part)
+  bldgs.addSource('selbound',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  bldgs.addLayer({id:'selbound-3d',type:'fill-extrusion',source:'selbound',
+    paint:{'fill-extrusion-color':'#ffd23f','fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.35}});
 
   // STACK — exploded clickable levels
   // shell plate = the selected building's footprint (same gold shape as the
@@ -276,7 +309,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
     paint:{'fill-extrusion-color':'#caa64a','fill-extrusion-height':0.5,'fill-extrusion-base':0,'fill-extrusion-opacity':0.5}});
   stk.addSource('stack',{type:'geojson',data:buildStack()});
   stk.addLayer({id:'stack',type:'fill-extrusion',source:'stack',
-    paint:{'fill-extrusion-color':stackColorExpr(),'fill-extrusion-base':['*',['-',['get','_lv'],minLv],GAP],'fill-extrusion-height':['+',['*',['-',['get','_lv'],minLv],GAP],SLAB],'fill-extrusion-opacity':0.92}});
+    paint:{'fill-extrusion-color':stackColorExpr(),'fill-extrusion-base':['get','_base'],'fill-extrusion-height':['get','_top'],'fill-extrusion-opacity':0.95}});
 
   // PLAN — 2D level + clickable components
   plan.addSource('level',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
@@ -296,11 +329,12 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   mePlan=new maplibregl.Marker({element:arrow}).setLngLat(CENTER).addTo(plan);
 
   // building hover (pre-select + info)
-  bldgs.on('mousemove','buildings-3d',e=>{ const g=GROUP[e.features[0].id]; bldgs.getCanvas().style.cursor='pointer';
-    if(g!==hoverGroup){ if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=g; setGroupState(g,'hover',true); }
-    setInfo(buildingInfo(BUILDINGS.features[g].properties,'hover')); });
+  bldgs.on('mousemove','buildings-3d',e=>{ const g=GROUP[e.features[0].id], ok=groupHasLevels(g);   // only buildings with indoor levels are selectable
+    bldgs.getCanvas().style.cursor=ok?'pointer':''; const hg=ok?g:null;
+    if(hg!==hoverGroup){ if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=hg; if(hoverGroup!=null) setGroupState(hoverGroup,'hover',true); }
+    setInfo(buildingInfo(BUILDINGS.features[g].properties, ok?'hover':'none')); });
   bldgs.on('mouseleave','buildings-3d',()=>{ bldgs.getCanvas().style.cursor=''; if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=null; setInfo(selInfo); });
-  bldgs.on('click','buildings-3d',e=>{ selectBuilding(GROUP[e.features[0].id]); setStep('stack'); });
+  bldgs.on('click','buildings-3d',e=>{ const g=GROUP[e.features[0].id]; if(!groupHasLevels(g)) return; selectBuilding(g); setStep('stack'); });
   // level click → focus
   stk.on('click','stack',e=>{ focusLevel(e.features[0].properties._lv); setStep('fps'); });
   // plan: hover → info; click → pick the component (highlighted in plan + FPS,
@@ -339,11 +373,11 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
 const setInfo=h=>document.getElementById('info').innerHTML=h;
 const stackInfo=()=>document.getElementById('stackinfo').innerHTML = SEL_LEVELS.length?`<b>${selName}</b><br>level <b>${activeLevel}</b> · ${SEL_LEVELS.length} levels`:`<b>${selName}</b><br><i>no indoor levels</i>`;
 function buildingInfo(p,mode){ const m=[]; if(p['building:levels']) m.push(p['building:levels']+' levels'); if(p.height) m.push(p.height+' m'); if(p.building&&p.building!=='yes') m.push(p.building);
-  return `<b>${p.name||p.building||'building'}</b>${m.length?'<br>'+m.join(' · '):''}<br>${mode==='hover'?'<i>click to select</i>':'↗ pick a level (middle)'}`; }
+  const hint = mode==='hover' ? '<i>click to select</i>' : mode==='none' ? '<i style="color:#8b949e">no indoor levels mapped</i>' : '↗ pick a level (middle)';
+  return `<b>${p.name||p.building||'building'}</b>${m.length?'<br>'+m.join(' · '):''}<br>${hint}`; }
 
 function selectBuilding(groupId){
-  if(selGroup!=null) setGroupState(selGroup,'sel',false);
-  selGroup=(groupId==null?null:groupId); if(selGroup!=null) setGroupState(selGroup,'sel',true);
+  selGroup=(groupId==null?null:groupId); updateSelBound();   // selection = one translucent bounding building
   const feat=(selGroup!=null)?BUILDINGS.features[selGroup]:null;
   SEL = feat ? INDOOR.features.filter(f=>inBbox(repPoint(f.geometry),bboxOf(feat.geometry))) : INDOOR.features;
   const set=new Set(); for(const f of SEL) for(const n of parseLevels(f.properties.level)) set.add(n);
@@ -353,8 +387,8 @@ function selectBuilding(groupId){
   if(SEL_LEVELS.length){
     minLv=Math.min(...SEL_LEVELS); activeLevel=SEL_LEVELS.includes(0)?0:SEL_LEVELS[0];
     stk.getSource('stack').setData(buildStack());
-    stk.setPaintProperty('stack','fill-extrusion-base',['*',['-',['get','_lv'],minLv],GAP]);
-    stk.setPaintProperty('stack','fill-extrusion-height',['+',['*',['-',['get','_lv'],minLv],GAP],SLAB]);
+    stk.setPaintProperty('stack','fill-extrusion-base',['get','_base']);
+    stk.setPaintProperty('stack','fill-extrusion-height',['get','_top']);
     const shellFeats = selGroup!=null ? (MEMBERS[selGroup]||[selGroup]).map(id=>BUILDINGS.features[id]).filter(f=>f&&f.geometry) : [];
     stk.getSource('shellbase').setData({type:'FeatureCollection',features:shellFeats});
     const fitFeats = floorsOf(SEL).length?floorsOf(SEL):(shellFeats.length?shellFeats:SEL);
