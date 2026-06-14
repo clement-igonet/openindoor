@@ -20,6 +20,7 @@
   body:not(.mobile) #stackinfo{left:8px;top:calc(50% + 28px)}
   body:not(.mobile) #hud{left:34%}
   body:not(.mobile) #look{left:34%}
+  body:not(.mobile) #selinfo{left:34%;top:8px;max-width:30%}
   .tag{position:absolute;z-index:6;color:#fff;font:600 11px system-ui;text-shadow:0 1px 3px #000;pointer-events:none;top:6px}
   #cross{position:absolute;left:50%;top:75%;width:16px;height:16px;transform:translate(-50%,-50%);z-index:6;pointer-events:none;opacity:.85}
   #cross::before,#cross::after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
@@ -31,6 +32,7 @@
   #look{left:8px;bottom:54px;max-width:60%;display:none}
   #hud{left:10px;bottom:30px;max-width:62%;font-size:12px}
   #planinfo{right:12px;bottom:34px;max-width:23%;display:none;pointer-events:none}
+  #selinfo{left:8px;top:8px;max-width:46%;display:none;border-left:3px solid #ffd23f}
   #planzoom{position:absolute;right:12px;top:calc(10px + 31% + 6px);z-index:8;display:flex;gap:5px}
   #planzoom button{width:30px;height:30px;border:0;border-radius:7px;background:rgba(13,17,23,.85);color:#fff;font:700 16px system-ui;cursor:pointer}
   body.mobile #planzoom{display:none}
@@ -61,6 +63,7 @@
   <div class="panel" id="info">hover a building</div>
   <div class="panel" id="stackinfo"></div>
   <div class="panel" id="planinfo"></div>
+  <div class="panel" id="selinfo"></div>
   <div class="panel" id="look"></div>
   <div class="panel" id="hud"></div>
   <div class="attrib">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · <a href="https://indoorequal.org" target="_blank" rel="noopener">indoorequal</a></div>
@@ -515,9 +518,10 @@ function landAt(fromPt,toPt){ const ux=toPt.lng-fromPt.lng, uy=toPt.lat-fromPt.l
 function startRide(z){ const {up,target}=escDir(z.p); if(target==null) return;
   const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
   const board=md(player,a)<md(player,b)?a:b, far=board===a?b:a;
-  turnTo=null;
-  if(up){ ride={from:board,to:far,target,up:true,t:0,dur:Math.max(1.2,md(board,far)/2.2)}; }   // ride to the top, then switch up
-  else { rideCool=1.6; focusLevel(target,true); landAt(board,far); }   // going down → switch to the level below right away
+  turnTo=null; const run=md(board,far);
+  // both directions are a real ride at rolling-escalator pace; up traverses the
+  // whole run before switching at the top, down switches quickly after a short descent
+  ride={from:board,to:far,target,up,t:0,dur: up ? Math.max(2.5,Math.min(7,run/ESC_SPEED)) : 1.0};
 }
 function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
   player.lng=ride.from.lng+(ride.to.lng-ride.from.lng)*t; player.lat=ride.from.lat+(ride.to.lat-ride.from.lat)*t;
@@ -540,7 +544,11 @@ function paintState(pickV){
   plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#0d1117']);
   plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,['==',['get','_id'],['literal',h]],2.2,1.5]);
 }
-function repaint(){ paintState(); }
+function repaint(){ paintState(); showSel(); }
+/* fixed panel showing the SELECTED element's info (persists until selection
+   changes); hover info (#look / #planinfo) is separate and transient */
+function showSel(){ const el=document.getElementById('selinfo'); const f=(PICK!=null&&INDOOR.features[PICK])?INDOOR.features[PICK]:null;
+  if(f){ el.style.display='block'; el.innerHTML='📌 '+describe(f.properties); } else el.style.display='none'; }
 /* brief flash of the just-selected component (gold ↔ its colour), then solid */
 let flashN=0, flashAcc=0, flashOn=true;
 function startFlash(){ if(PICK!=null){ flashN=6; flashAcc=0; flashOn=true; } }
@@ -609,7 +617,7 @@ function faceTarget(lng,lat){
 }
 
 /* FPS eye (camera math verified mercator-correct) */
-const EYE_H=1.6, ZOOM_FPS=21, MOVE=2.8, TURN=2.4;   // MOVE ≈ 10 km/h
+const EYE_H=1.6, ZOOM_FPS=21, MOVE=2.8, TURN=2.4, ESC_SPEED=0.9;   // MOVE ≈ 10 km/h; ESC_SPEED ≈ rolling-escalator pace (m/s)
 function fpsCamera(){
   const H=fps.getCanvas().clientHeight||500;
   const mpp=EARTH*COSLAT/(512*Math.pow(2,ZOOM_FPS));
