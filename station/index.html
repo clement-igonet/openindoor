@@ -324,7 +324,7 @@ function describe(p){
 }
 
 const EMPTY={version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#1b2230'}}]};
-const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,minPitch:80,maxPitch:100,interactive:false,attributionControl:false,fadeDuration:0});
+const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,minPitch:40,maxPitch:100,interactive:false,attributionControl:false,fadeDuration:0});
 const bldgs=new maplibregl.Map({container:'buildings',style:EMPTY,center:CENTER,zoom:15.4,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const stk  =new maplibregl.Map({container:'stack',style:EMPTY,center:CENTER,zoom:15.8,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const plan =new maplibregl.Map({container:'plan',style:EMPTY,center:CENTER,zoom:17,pitch:0,bearing:0,attributionControl:false,fadeDuration:0});
@@ -606,7 +606,7 @@ const keys={};
 addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code.startsWith('Arrow')||e.code==='Space') e.preventDefault();
   if(e.code==='Space' && (!MOBILE||step==='fps')) selectUnderCross(); });
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; player.pitch=Math.max(85,Math.min(95,player.pitch-e.movementY*0.06)); turnTo=null; } });
+addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; player.pitch=Math.max(45,Math.min(95,player.pitch-e.movementY*0.06)); turnTo=null; } });
 // re-evaluate mobile on resize so shrinking the desktop window switches into the
 // stepped single-view layout (and back), then resize every map.
 addEventListener('resize',()=>{
