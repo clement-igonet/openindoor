@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>OpenIndoor · Station — Gare de Lyon (MapLibre)</title>
+<link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0d1117;font-family:system-ui,sans-serif}
+  .pane{position:absolute;border:1px solid #0d1117}
+  /* desktop layout: buildings top-left, level-stack bottom-left, FPS the right
+     two-thirds full-height, level plan a small window floated over the FPS
+     top-right corner. (mobile overrides further down.) */
+  body:not(.mobile) #buildings{top:0;left:0;width:33.33%;height:50%}
+  body:not(.mobile) #stack    {bottom:0;left:0;width:33.33%;height:50%}
+  body:not(.mobile) #fps      {top:0;right:0;width:66.67%;height:100%}
+  body:not(.mobile) #plan     {top:10px;right:10px;width:23%;height:31%;z-index:5;border:2px solid rgba(255,255,255,.5);border-radius:10px;overflow:hidden}
+  body:not(.mobile) #cross{left:66.6%;top:50%}
+  body:not(.mobile) #stackinfo{left:8px;top:calc(50% + 28px)}
+  body:not(.mobile) #hud{left:34%}
+  body:not(.mobile) #look{left:34%}
+  .tag{position:absolute;z-index:6;color:#fff;font:600 11px system-ui;text-shadow:0 1px 3px #000;pointer-events:none;top:6px}
+  #cross{position:absolute;left:50%;top:75%;width:16px;height:16px;transform:translate(-50%,-50%);z-index:6;pointer-events:none;opacity:.85}
+  #cross::before,#cross::after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
+  #cross::before{left:7px;top:0;width:2px;height:16px}#cross::after{top:7px;left:0;height:2px;width:16px}
+  .panel{position:absolute;z-index:7;color:#c9d1d9;font-size:11px;background:rgba(13,17,23,.82);padding:7px 9px;border-radius:7px;line-height:1.45}
+  .panel b{color:#fff}
+  #info{left:8px;top:28px;max-width:30%;pointer-events:none}
+  #stackinfo{left:34%;top:28px;max-width:29%;pointer-events:none}
+  #look{left:8px;bottom:54px;max-width:60%;display:none}
+  #hud{left:10px;bottom:30px;max-width:62%;font-size:12px}
+  #planinfo{right:12px;bottom:34px;max-width:23%;display:none;pointer-events:none}
+  #planzoom{position:absolute;right:12px;top:calc(10px + 31% + 6px);z-index:8;display:flex;gap:5px}
+  #planzoom button{width:30px;height:30px;border:0;border-radius:7px;background:rgba(13,17,23,.85);color:#fff;font:700 16px system-ui;cursor:pointer}
+  body.mobile #planzoom{display:none}
+  .me{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:15px solid #ffd23f;filter:drop-shadow(0 0 2px #000)}
+  .attrib{position:absolute;right:6px;bottom:4px;z-index:7;color:#8b949e;font-size:10px;background:rgba(13,17,23,.6);padding:2px 6px;border-radius:5px}
+  .attrib a{color:#8b949e}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:20;color:#c9d1d9;background:#0d1117}
+  .maplibregl-popup-content{background:#161b22;color:#c9d1d9;font:12px system-ui;border-radius:8px}
+  .maplibregl-popup-content b{color:#fff}
+  /* ---- mobile: one view at a time, stepped buildings → levels → FPS ---- */
+  #back{display:none;position:absolute;top:8px;left:8px;z-index:9;background:rgba(13,17,23,.85);color:#fff;border:0;border-radius:8px;font:600 13px system-ui;padding:9px 13px}
+  body.mobile .pane{inset:0;width:100%;height:100%;display:none;border:0}
+  body.mobile .pane.show{display:block}
+  body.mobile #plan.inset.show{inset:auto;top:10px;right:10px;width:40vw;height:40vw;display:block;border:2px solid rgba(255,255,255,.55);border-radius:10px;overflow:hidden;z-index:5}
+  body.mobile #cross{top:50%}
+  body.mobile .tag{display:none}
+  body.mobile #info,body.mobile #stackinfo{max-width:78%}
+</style>
+</head>
+<body>
+  <div class="pane" id="buildings"></div><span class="tag" style="left:8px">🏙 buildings — hover &amp; click</span>
+  <div class="pane" id="stack"></div><span class="tag" style="left:8px;top:calc(50% + 6px)">🗂 building levels — click one</span>
+  <div class="pane" id="fps"></div><span class="tag" id="tag-p" style="left:34%;top:auto;bottom:8px">🎮 first person</span>
+  <div class="pane" id="plan"></div><span class="tag" style="left:auto;right:13px;top:14px">🗺 plan</span>
+  <div id="planzoom"><button id="pz-in" title="zoom in">+</button><button id="pz-out" title="zoom out">−</button></div>
+  <div id="cross"></div>
+  <button id="back">‹ back</button>
+  <div class="panel" id="info">hover a building</div>
+  <div class="panel" id="stackinfo"></div>
+  <div class="panel" id="planinfo"></div>
+  <div class="panel" id="look"></div>
+  <div class="panel" id="hud"></div>
+  <div class="attrib">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · <a href="https://indoorequal.org" target="_blank" rel="noopener">indoorequal</a></div>
+  <div id="loading">loading Gare de Lyon…</div>
+
+<script>
+/* ============================================================================
+ * OpenIndoor · Station — Gare de Lyon, on MapLibre GL JS. Four linked maps:
+ *   #buildings (TL) all 3D shells; hover pre-selects, click selects.
+ *   #stack     (TM) the selected building's levels, exploded & colour-coded;
+ *                   click one to focus. Rotation only (no pan), auto-fit.
+ *   #plan      (TR) the focused level, 2D, heading-up, whole floor; click a
+ *                   feature (shop / stairs / elevator / door…) for info.
+ *   #fps       (B)  first-person walk, confined to the walkable indoor area;
+ *                   the component under the crosshair is highlighted + described.
+ * Desktop shows all four; mobile steps through buildings → levels → FPS.
+ * Data © OpenStreetMap contributors (ODbL). See data/fetch*.sh.
+ * ==========================================================================*/
+
+const CENTER=[2.374633,48.844533], LAT0=CENTER[1], COSLAT=Math.cos(LAT0*Math.PI/180);
+const M_LAT=111320, M_LON=111320*COSLAT, EARTH=40075016.686, WALL_H=3;
+const GAP=5, SLAB=0.6, FLOORISH=['room','area','corridor','yes','level'];
+const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(v).split(';')){const n=parseFloat(p); if(!isNaN(n)) o.push(n);} return o; };
+
+let INDOOR={type:'FeatureCollection',features:[]}, BUILDINGS={type:'FeatureCollection',features:[]};
+let SEL=[], SEL_LEVELS=[0], minLv=0, activeLevel=0, selGroup=null, hoverGroup=null, lookKey=null, lookRef=null, PICK=null, GROUP={}, MEMBERS={};
+let selInfo='hover a building', selName='Gare de Lyon', mePlan, planCenter=CENTER, planZoom=17, planZoomAdj=0, turnTo=null, WALK=[];
+const player={lng:CENTER[0],lat:CENTER[1],heading:0};
+const compass=()=>Math.atan2(Math.cos(player.heading),Math.sin(player.heading))*180/Math.PI;
+// mobile = coarse pointer OR a narrow window — so a desktop window shrunk below
+// 820px switches to the stepped single-view layout (lets you simulate mobile).
+const isMobile=()=>matchMedia('(pointer:coarse)').matches||innerWidth<=820;
+let MOBILE=isMobile();
+document.body.classList.toggle('mobile',MOBILE);
+let step='buildings';
+
+const levelFC=lv=>({type:'FeatureCollection',features:SEL.filter(f=>{const l=parseLevels(f.properties.level); return l.length&&l.includes(lv);})});
+const floorsOf=arr=>arr.filter(f=>FLOORISH.includes(f.properties.indoor)&&f.geometry&&(f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon'));
+function centroid(features){ let sx=0,sy=0,n=0; const w=c=>{ if(typeof c[0]==='number'){sx+=c[0];sy+=c[1];n++;} else c.forEach(w); }; for(const f of features) if(f.geometry) w(f.geometry.coordinates); return n?[sx/n,sy/n]:CENTER; }
+const repPoint=g=>{ let c=g&&g.coordinates; while(c&&typeof c[0]!=='number') c=c[0]; return c; };
+function bboxOf(g){ const a=[180,90,-180,-90]; const w=c=>{ if(typeof c[0]==='number'){a[0]=Math.min(a[0],c[0]);a[1]=Math.min(a[1],c[1]);a[2]=Math.max(a[2],c[0]);a[3]=Math.max(a[3],c[1]);} else c.forEach(w); }; w(g.coordinates); return a; }
+const inBbox=(p,b)=>p&&p[0]>=b[0]&&p[0]<=b[2]&&p[1]>=b[1]&&p[1]<=b[3];
+function fitView(features,m,pad,wide){ pad=pad||1.2; const bb=[180,90,-180,-90];
+  for(const f of features) if(f.geometry){const b=bboxOf(f.geometry); bb[0]=Math.min(bb[0],b[0]);bb[1]=Math.min(bb[1],b[1]);bb[2]=Math.max(bb[2],b[2]);bb[3]=Math.max(bb[3],b[3]);}
+  if(bb[2]<bb[0]) return {center:CENTER,zoom:16};
+  const center=[(bb[0]+bb[2])/2,(bb[1]+bb[3])/2], ext=Math.max((bb[2]-bb[0])*M_LON,(bb[3]-bb[1])*M_LAT,20);
+  const cv=m.getCanvas(), px=wide?(cv.clientWidth||300):Math.min(cv.clientWidth||300,cv.clientHeight||300);
+  return {center, zoom:Math.log2(EARTH*COSLAT/(512*(ext*pad/px)))}; }
+/* walkable area (floor polygons) for FPS containment */
+function walkRings(features){ const r=[]; for(const f of features){ if(!FLOORISH.includes(f.properties.indoor)||!f.geometry) continue;
+  if(f.geometry.type==='Polygon') r.push(f.geometry.coordinates[0]); else if(f.geometry.type==='MultiPolygon') for(const p of f.geometry.coordinates) r.push(p[0]); } return r; }
+function pir(x,y,ring){ let inside=false; for(let i=0,j=ring.length-1;i<ring.length;j=i++){const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1]; if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;} return inside; }
+function insideWalk(lng,lat){ if(!WALK.length) return true; for(const r of WALK) if(pir(lng,lat,r)) return true; return false; }
+const ringCentroid=r=>{ let sx=0,sy=0; for(const p of r){sx+=p[0];sy+=p[1];} return [sx/r.length,sy/r.length]; };
+const ringArea=r=>{ let a=0; for(let i=0,j=r.length-1;i<r.length;j=i++) a+=(r[j][0]+r[i][0])*(r[j][1]-r[i][1]); return Math.abs(a/2); };
+/* a point guaranteed inside a (possibly concave) ring: centroid if it lands
+   inside, else the first hit of a grid sweep over the bbox */
+function interiorPoint(ring){ const c=ringCentroid(ring); if(pir(c[0],c[1],ring)) return c;
+  const bb=[180,90,-180,-90]; for(const p of ring){bb[0]=Math.min(bb[0],p[0]);bb[1]=Math.min(bb[1],p[1]);bb[2]=Math.max(bb[2],p[0]);bb[3]=Math.max(bb[3],p[1]);}
+  for(let gy=1;gy<12;gy++) for(let gx=1;gx<12;gx++){ const x=bb[0]+(bb[2]-bb[0])*gx/12, y=bb[1]+(bb[3]-bb[1])*gy/12; if(pir(x,y,ring)) return [x,y]; }
+  return c; }
+/* spawn inside the largest walkable floor polygon (the main hall) */
+function spawnInside(fc){ if(!WALK.length) return centroid(fc.features);
+  let big=WALK[0],ba=-1; for(const r of WALK){ const a=ringArea(r); if(a>ba){ ba=a; big=r; } }
+  return interiorPoint(big); }
+
+/* Group buildings as seen from the sky: each `building` footprint is a group;
+   `building:part` pieces are folded into the smallest footprint that contains
+   them. GROUP[id] → its footprint id; MEMBERS[footprintId] → all member ids. */
+function computeGroups(){
+  GROUP={}; MEMBERS={};
+  const foot=[];
+  BUILDINGS.features.forEach((f,i)=>{ if(f.properties.building && f.geometry){
+    const rings=[]; if(f.geometry.type==='Polygon') rings.push(f.geometry.coordinates[0]);
+    else if(f.geometry.type==='MultiPolygon') for(const p of f.geometry.coordinates) rings.push(p[0]);
+    if(rings.length){ const bb=bboxOf(f.geometry); foot.push({id:i,rings,area:(bb[2]-bb[0])*(bb[3]-bb[1])}); }
+  }});
+  foot.sort((a,b)=>a.area-b.area);                  // smallest first → most specific
+  foot.forEach(ft=>{ GROUP[ft.id]=ft.id; MEMBERS[ft.id]=[ft.id]; });
+  BUILDINGS.features.forEach((f,j)=>{
+    if(GROUP[j]!=null) return;                       // already a footprint group
+    const pt=repPoint(f.geometry); let g=null;
+    if(pt) for(const ft of foot){ if(ft.rings.some(r=>pir(pt[0],pt[1],r))){ g=ft.id; break; } }
+    if(g!=null){ GROUP[j]=g; MEMBERS[g].push(j); } else { GROUP[j]=j; MEMBERS[j]=[j]; }
+  });
+}
+const setGroupState=(g,key,val)=>{ for(const id of (MEMBERS[g]||[g])) bldgs.setFeatureState({source:'buildings',id},{[key]:val}); };
+/* how many distinct indoor levels fall within a building group's footprint */
+function indoorLevelsOf(groupId){ const feat=BUILDINGS.features[groupId]; if(!feat||!feat.geometry) return 0;
+  const bb=bboxOf(feat.geometry), set=new Set();
+  for(const f of INDOOR.features){ if(!f.geometry) continue; const pt=repPoint(f.geometry); if(!inBbox(pt,bb)) continue;
+    for(const n of parseLevels(f.properties.level)) if(n>=-6&&n<=4) set.add(n); }
+  return set.size; }
+
+/* OSM `indoor=wall` are zero-width ways and room/shop outlines are thin rings;
+   buffer them into solid quads (≈0.5 m thick) so they read as real walls in the
+   first-person view instead of disappearing. Returns an array of polygon rings. */
+function bufferLine(coords,T){ const polys=[], h=T/2;
+  for(let i=0;i+1<coords.length;i++){ const a=coords[i], b=coords[i+1];
+    const dxm=(b[0]-a[0])*M_LON, dym=(b[1]-a[1])*M_LAT, len=Math.hypot(dxm,dym)||1;
+    const ndx=(-dym/len*h)/M_LON, ndy=(dxm/len*h)/M_LAT;
+    polys.push([[[a[0]+ndx,a[1]+ndy],[b[0]+ndx,b[1]+ndy],[b[0]-ndx,b[1]-ndy],[a[0]-ndx,a[1]-ndy],[a[0]+ndx,a[1]+ndy]]]); }
+  return polys; }
+function wallsFC(features,T){ const out=[];
+  for(const f of features){ const ind=f.properties.indoor, g=f.geometry; if(!g) continue; const src=f.properties._id;
+    if(ind==='wall'){ const lines=g.type==='LineString'?[g.coordinates]:g.type==='MultiLineString'?g.coordinates:g.type==='Polygon'?g.coordinates:[];
+      for(const ln of lines){ const p=bufferLine(ln,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
+    else if(ind==='column'){ out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:g}); }
+    else if((ind==='room'||f.properties.shop)&&(g.type==='Polygon'||g.type==='MultiPolygon')){
+      const rings=g.type==='Polygon'?g.coordinates:[].concat(...g.coordinates);
+      for(const r of rings){ const p=bufferLine(r,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
+  } return {type:'FeatureCollection',features:out}; }
+/* point POIs → small extruded marker pillars for the first-person view */
+const POI_H={door:2.2,elevator:2.6,vending_machine:1.8,shop:2.4};
+const poiKind=p=>p.highway==='elevator'?'elevator':p.amenity==='vending_machine'?'vending_machine':p.door?'door':p.shop?'shop':null;
+const poiColorExpr=v=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','kind'],'elevator'],'#f0b429',['==',['get','kind'],'shop'],'#3fb950',['==',['get','kind'],'door'],'#e8543b','#58a6ff'];
+function poisFC(features){ const out=[], S=0.45, dx=S/M_LON, dy=S/M_LAT;
+  for(const f of features){ if(!f.geometry||f.geometry.type!=='Point') continue; const k=poiKind(f.properties); if(!k) continue;
+    const [x,y]=f.geometry.coordinates;
+    out.push({type:'Feature',properties:{...f.properties,_src:f.properties._id,kind:k,h:POI_H[k]||2.2},
+      geometry:{type:'Polygon',coordinates:[[[x-dx,y-dy],[x+dx,y-dy],[x+dx,y+dy],[x-dx,y+dy],[x-dx,y-dy]]]}}); }
+  return {type:'FeatureCollection',features:out}; }
+
+/* per-level colour ramp (step → tolerates fractional levels; active = white) */
+const STACK_PAL=['#5470c6','#3fb1e3','#37c79a','#6fd45a','#c4e34a','#f6c343','#f0883e','#e8543b','#d6457f','#9a5bd6'];
+const palRamp=()=>{ if(SEL_LEVELS.length<2) return STACK_PAL[0]; const e=['step',['get','_lv'],STACK_PAL[0]]; for(let k=1;k<SEL_LEVELS.length;k++) e.push(SEL_LEVELS[k],STACK_PAL[k%STACK_PAL.length]); return e; };
+const stackColorExpr=()=>['case',['==',['get','_lv'],['literal',activeLevel]],'#ffffff',palRamp()];
+function buildStack(){ const f=[]; for(const x of floorsOf(SEL)) for(const lv of parseLevels(x.properties.level)) f.push({type:'Feature',properties:{_lv:lv},geometry:x.geometry}); return {type:'FeatureCollection',features:f}; }
+
+/* describe an indoor component for hover/click info */
+function describe(p){
+  const name=p.name||(p.shop&&'shop')||p.amenity||(p.room&&'room')||p.indoor||'feature';
+  const b=[];
+  if(p.shop) b.push('shop · '+p.shop);
+  if(p.amenity) b.push(p.amenity.replace(/_/g,' '));
+  if(p.highway==='elevator') b.push('elevator');
+  if(p.highway==='steps') b.push(p.conveying&&p.conveying!=='no'?'escalator':'stairs');
+  if(p.door) b.push('door'+(p.door!=='yes'?' · '+p.door:''));
+  if(p.room) b.push('room · '+p.room);
+  if(p.indoor&&!p.shop) b.push('indoor · '+p.indoor);
+  if(p.level!=null) b.push('level '+p.level);
+  return `<b>${name}</b>${b.length?'<br>'+b.join(' · '):''}`;
+}
+
+const EMPTY={version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#1b2230'}}]};
+const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,maxPitch:90,interactive:false,attributionControl:false,fadeDuration:0});
+const bldgs=new maplibregl.Map({container:'buildings',style:EMPTY,center:CENTER,zoom:15.4,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
+const stk  =new maplibregl.Map({container:'stack',style:EMPTY,center:CENTER,zoom:15.8,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
+const plan =new maplibregl.Map({container:'plan',style:EMPTY,center:CENTER,zoom:17,pitch:0,bearing:0,attributionControl:false,fadeDuration:0});
+// stack: rotation only — no pan/zoom translation
+stk.dragPan.disable(); stk.scrollZoom.disable(); stk.doubleClickZoom.disable(); stk.boxZoom.disable(); stk.keyboard.disable();
+// drag to orbit (bearing) + tilt (pitch) around the building & its levels — never pans
+(()=>{ let d=null; const cv=stk.getCanvas(); cv.style.cursor='grab';
+  const rot=(x,y)=>{ const dx=x-d.x, dy=y-d.y; d={x,y};
+    stk.setBearing(stk.getBearing()-dx*0.4); stk.setPitch(Math.max(0,Math.min(82,stk.getPitch()+dy*0.3))); };
+  cv.addEventListener('mousedown',e=>{ d={x:e.clientX,y:e.clientY}; cv.style.cursor='grabbing'; e.preventDefault(); });
+  addEventListener('mousemove',e=>{ if(d) rot(e.clientX,e.clientY); });
+  addEventListener('mouseup',()=>{ d=null; cv.style.cursor='grab'; });
+  cv.addEventListener('touchstart',e=>{ const t=e.touches[0]; d={x:t.clientX,y:t.clientY}; },{passive:true});
+  cv.addEventListener('touchmove',e=>{ if(d){ const t=e.touches[0]; rot(t.clientX,t.clientY); } },{passive:true});
+  cv.addEventListener('touchend',()=>d=null);
+})();
+// plan: clicks only (no pan/zoom) — it follows the player heading-up
+plan.dragPan.disable(); plan.scrollZoom.disable(); plan.doubleClickZoom.disable(); plan.boxZoom.disable(); plan.dragRotate.disable();
+const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(false);}catch(_){ } r();}));
+
+(async ()=>{
+  const [b,i]=await Promise.all([
+    fetch('data/buildings.geojson').then(r=>r.json()),
+    fetch('data/gare-de-lyon.geojson').then(r=>r.json()),
+    onLoad(fps),onLoad(bldgs),onLoad(stk),onLoad(plan),
+  ]);
+  BUILDINGS=b; INDOOR=i; INDOOR.features.forEach((f,k)=>{f.properties._id=k;}); SEL=INDOOR.features;
+
+  // FPS — floors + walls (ids for hover highlight)
+  fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
+  fps.addLayer({id:'floor',type:'fill',source:'indoor',filter:['in',['get','indoor'],['literal',FLOORISH]],
+    paint:{'fill-color':['case',['==',['get','_id'],['literal',-1]],'#473f24','#2f3a4d'],'fill-outline-color':'#46566f'}});
+  fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
+    paint:{'fill-extrusion-color':['case',['any',['==',['get','_src'],['literal',-1]],['boolean',['feature-state','look'],false]],'#ffd23f','#9aa6b8'],'fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
+  // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
+  // so a point picked in the plan is highlightable in first person too
+  fps.addSource('pois3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  fps.addLayer({id:'pois3d',type:'fill-extrusion',source:'pois3d',
+    paint:{'fill-extrusion-color':poiColorExpr(-1),'fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.96}});
+
+  // BUILDINGS — 3D shells, hover/select
+  BUILDINGS.features.forEach((f,i)=>f.id=i); computeGroups();
+  bldgs.addSource('buildings',{type:'geojson',data:BUILDINGS});
+  bldgs.addLayer({id:'buildings-3d',type:'fill-extrusion',source:'buildings',filter:['any',['has','building'],['has','building:part']],
+    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','sel'],false],'#ffd23f',['boolean',['feature-state','hover'],false],'#e8b84b',
+        ['==',['get','building'],'train_station'],'#b8643c',['has','building:part'],'#8a93a3','#6b7585'],
+      'fill-extrusion-height':['case',['has','height'],['to-number',['get','height']],['has','building:levels'],['*',['to-number',['get','building:levels']],3.2],9],
+      'fill-extrusion-base':['case',['has','min_height'],['to-number',['get','min_height']],0],'fill-extrusion-opacity':0.9}});
+
+  // STACK — exploded clickable levels
+  // shell plate = the selected building's footprint (same gold shape as the
+  // buildings view) → makes clear the exploded levels belong to THAT building
+  stk.addSource('shellbase',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  stk.addLayer({id:'shellbase',type:'fill-extrusion',source:'shellbase',filter:['any',['has','building'],['has','building:part']],
+    paint:{'fill-extrusion-color':'#caa64a','fill-extrusion-height':0.5,'fill-extrusion-base':0,'fill-extrusion-opacity':0.5}});
+  stk.addSource('stack',{type:'geojson',data:buildStack()});
+  stk.addLayer({id:'stack',type:'fill-extrusion',source:'stack',
+    paint:{'fill-extrusion-color':stackColorExpr(),'fill-extrusion-base':['*',['-',['get','_lv'],minLv],GAP],'fill-extrusion-height':['+',['*',['-',['get','_lv'],minLv],GAP],SLAB],'fill-extrusion-opacity':0.92}});
+
+  // PLAN — 2D level + clickable components
+  plan.addSource('level',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  plan.addLayer({id:'p-floor',type:'fill',source:'level',filter:['in',['get','indoor'],['literal',FLOORISH]],paint:{'fill-color':'#2f3a4d','fill-outline-color':'#5a6e8c'}});
+  // clickable AREAS — rooms/shops (these become 3D walls in FPS): filled + outlined
+  plan.addLayer({id:'p-area',type:'fill',source:'level',filter:['any',['==',['get','indoor'],'room'],['has','shop']],
+    paint:{'fill-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f',['has','shop'],'#2e6f4e','#34507a'],'fill-opacity':0.6}});
+  plan.addLayer({id:'p-area-line',type:'line',source:'level',filter:['any',['==',['get','indoor'],'room'],['has','shop']],
+    paint:{'line-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f',['has','shop'],'#3fb950','#58a6ff'],'line-width':1.4}});
+  plan.addLayer({id:'p-wall-line',type:'line',source:'level',filter:['==',['get','indoor'],'wall'],paint:{'line-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#8893a5'],'line-width':1.2}});
+  plan.addLayer({id:'p-walls',type:'fill',source:'level',filter:['==',['get','indoor'],'column'],paint:{'fill-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#9aa6b8']}});
+  plan.addLayer({id:'p-stairs',type:'line',source:'level',filter:['==',['get','highway'],'steps'],paint:{'line-color':'#f0b429','line-width':2.4}});
+  // clickable POINTS — doors / elevators / vending / point-shops: circles (Point geometry only)
+  plan.addLayer({id:'p-poi',type:'circle',source:'level',filter:['all',['==',['geometry-type'],'Point'],['any',['has','shop'],['==',['get','highway'],'elevator'],['==',['get','amenity'],'vending_machine'],['has','door']]],
+    paint:{'circle-radius':5,'circle-color':['case',['==',['get','highway'],'elevator'],'#f0b429',['has','shop'],'#3fb950',['has','door'],'#e8543b','#58a6ff'],'circle-stroke-width':['case',['==',['get','_id'],['literal',-1]],3,1.5],'circle-stroke-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#0d1117']}});
+  const arrow=document.createElement('div'); arrow.className='me';
+  mePlan=new maplibregl.Marker({element:arrow}).setLngLat(CENTER).addTo(plan);
+
+  // building hover (pre-select + info)
+  bldgs.on('mousemove','buildings-3d',e=>{ const g=GROUP[e.features[0].id]; bldgs.getCanvas().style.cursor='pointer';
+    if(g!==hoverGroup){ if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=g; setGroupState(g,'hover',true); }
+    setInfo(buildingInfo(BUILDINGS.features[g].properties,'hover')); });
+  bldgs.on('mouseleave','buildings-3d',()=>{ bldgs.getCanvas().style.cursor=''; if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=null; setInfo(selInfo); });
+  bldgs.on('click','buildings-3d',e=>{ selectBuilding(GROUP[e.features[0].id]); setStep('stack'); });
+  // level click → focus
+  stk.on('click','stack',e=>{ focusLevel(e.features[0].properties._lv); setStep('fps'); });
+  // plan: hover → info; click → pick the component (highlighted in plan + FPS,
+  // and the player turns to face it)
+  const PLANQ=['p-poi','p-stairs','p-wall-line','p-area-line','p-area','p-walls','p-floor'];
+  plan.on('mousemove',e=>{ const fs=plan.queryRenderedFeatures(e.point,{layers:PLANQ}); const pi=document.getElementById('planinfo');
+    if(fs.length){ plan.getCanvas().style.cursor='pointer'; pi.style.display='block'; pi.innerHTML=describe(fs[0].properties); }
+    else { plan.getCanvas().style.cursor=''; pi.style.display='none'; } });
+  plan.on('mouseout',()=>{ document.getElementById('planinfo').style.display='none'; plan.getCanvas().style.cursor=''; });
+  plan.on('click',e=>{ const fs=plan.queryRenderedFeatures(e.point,{layers:PLANQ});
+    if(!fs.length){ PICK=null; applyPick(); return; }
+    PICK=(fs[0].properties._id!=null?fs[0].properties._id:null); applyPick();
+    faceTarget(e.lngLat.lng,e.lngLat.lat); setStep('fps'); });   // turn to face it (no walking)
+
+  // FPS touch (mobile): drag to turn + walk
+  const cv=fps.getCanvas(); let tId=null,tX=0,tY=0;
+  cv.addEventListener('touchstart',e=>{const t=e.changedTouches[0];tId=t.identifier;tX=t.clientX;tY=t.clientY;e.preventDefault();},{passive:false});
+  cv.addEventListener('touchmove',e=>{for(const t of e.changedTouches){if(t.identifier!==tId)continue;const ddx=t.clientX-tX,ddy=t.clientY-tY;tX=t.clientX;tY=t.clientY;player.heading-=ddx*0.005;move(-ddy*0.05);}e.preventDefault();},{passive:false});
+  cv.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===tId)tId=null;});
+  cv.addEventListener('click',()=>{ if(!MOBILE) cv.requestPointerLock?.(); });
+
+  // default selection: the train_station group with the most indoor levels (the
+  // Gare de Lyon hall) — name-matching alone would grab the "Ibis Gare de Lyon" hotel.
+  const stationG=new Set();
+  for(let k=0;k<BUILDINGS.features.length;k++) if(BUILDINGS.features[k].properties.building==='train_station') stationG.add(GROUP[k]);
+  const cands=stationG.size?[...stationG]:Object.keys(MEMBERS).map(Number);
+  let g0=null,bestN=-1; for(const gid of cands){ const n=indoorLevelsOf(gid); if(n>bestN){ bestN=n; g0=gid; } }
+  selectBuilding(g0);
+  if(MOBILE) setStep('buildings');
+  [fps,bldgs,stk,plan].forEach(m=>m.resize());
+  document.getElementById('loading').remove();
+  requestAnimationFrame(frame);
+})();
+
+const setInfo=h=>document.getElementById('info').innerHTML=h;
+const stackInfo=()=>document.getElementById('stackinfo').innerHTML = SEL_LEVELS.length?`<b>${selName}</b><br>level <b>${activeLevel}</b> · ${SEL_LEVELS.length} levels`:`<b>${selName}</b><br><i>no indoor levels</i>`;
+function buildingInfo(p,mode){ const m=[]; if(p['building:levels']) m.push(p['building:levels']+' levels'); if(p.height) m.push(p.height+' m'); if(p.building&&p.building!=='yes') m.push(p.building);
+  return `<b>${p.name||p.building||'building'}</b>${m.length?'<br>'+m.join(' · '):''}<br>${mode==='hover'?'<i>click to select</i>':'↗ pick a level (middle)'}`; }
+
+function selectBuilding(groupId){
+  if(selGroup!=null) setGroupState(selGroup,'sel',false);
+  selGroup=(groupId==null?null:groupId); if(selGroup!=null) setGroupState(selGroup,'sel',true);
+  const feat=(selGroup!=null)?BUILDINGS.features[selGroup]:null;
+  SEL = feat ? INDOOR.features.filter(f=>inBbox(repPoint(f.geometry),bboxOf(feat.geometry))) : INDOOR.features;
+  const set=new Set(); for(const f of SEL) for(const n of parseLevels(f.properties.level)) set.add(n);
+  SEL_LEVELS=[...set].filter(n=>n>=-6&&n<=4).sort((a,b)=>a-b);
+  const p=feat?feat.properties:{name:'Gare de Lyon (whole station)'};
+  selName=p.name||p.building||'building';
+  if(SEL_LEVELS.length){
+    minLv=Math.min(...SEL_LEVELS); activeLevel=SEL_LEVELS.includes(0)?0:SEL_LEVELS[0];
+    stk.getSource('stack').setData(buildStack());
+    stk.setPaintProperty('stack','fill-extrusion-base',['*',['-',['get','_lv'],minLv],GAP]);
+    stk.setPaintProperty('stack','fill-extrusion-height',['+',['*',['-',['get','_lv'],minLv],GAP],SLAB]);
+    const shellFeats = selGroup!=null ? (MEMBERS[selGroup]||[selGroup]).map(id=>BUILDINGS.features[id]).filter(f=>f&&f.geometry) : [];
+    stk.getSource('shellbase').setData({type:'FeatureCollection',features:shellFeats});
+    const fitFeats = floorsOf(SEL).length?floorsOf(SEL):(shellFeats.length?shellFeats:SEL);
+    const sf=fitView(fitFeats,stk,0.82,true); stk.jumpTo({center:sf.center,zoom:sf.zoom,pitch:46,bearing:-17});
+    focusLevel(activeLevel);
+    selInfo=buildingInfo(p,'sel')+`<br>${SEL_LEVELS.length} indoor levels`;
+  } else {
+    stk.getSource('stack').setData({type:'FeatureCollection',features:[]});
+    stk.getSource('shellbase').setData({type:'FeatureCollection',features:[]});
+    plan.getSource('level').setData({type:'FeatureCollection',features:[]});
+    fps.getSource('indoor').setData({type:'FeatureCollection',features:[]});
+    fps.getSource('walls3d').setData({type:'FeatureCollection',features:[]});
+    WALK=[]; selInfo=`<b>${selName}</b><br><i>no indoor levels mapped</i>`; stackInfo();
+  }
+  setInfo(selInfo);
+}
+function focusLevel(lv){
+  if(!SEL_LEVELS.includes(lv)) return;
+  activeLevel=lv;
+  const fc=levelFC(lv);
+  fps.getSource('indoor').setData(fc);
+  fps.getSource('walls3d').setData(wallsFC(fc.features,0.5));
+  fps.getSource('pois3d').setData(poisFC(fc.features));
+  plan.getSource('level').setData(fc);
+  WALK=walkRings(fc.features);
+  const f=fitView(fc.features,plan,0.85); planCenter=f.center; planZoom=f.zoom; planZoomAdj=0;
+  const sp=spawnInside(fc); player.lng=sp[0]; player.lat=sp[1];
+  stk.setPaintProperty('stack','fill-extrusion-color',stackColorExpr());
+  PICK=null; applyPick();
+  stackInfo(); hud();
+}
+/* highlight the picked component (by stable _id) across the plan and FPS views */
+function applyPick(){ const v=(PICK==null?-1:PICK);
+  fps.setPaintProperty('walls','fill-extrusion-color',['case',['any',['==',['get','_src'],['literal',v]],['boolean',['feature-state','look'],false]],'#ffd23f','#9aa6b8']);
+  fps.setPaintProperty('pois3d','fill-extrusion-color',poiColorExpr(v));
+  fps.setPaintProperty('floor','fill-color',['case',['==',['get','_id'],['literal',v]],'#473f24','#2f3a4d']);
+  plan.setPaintProperty('p-floor','fill-color',['case',['==',['get','_id'],['literal',v]],'#473f24','#2f3a4d']);
+  plan.setPaintProperty('p-area','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['has','shop'],'#2e6f4e','#34507a']);
+  plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['has','shop'],'#3fb950','#58a6ff']);
+  plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#8893a5']);
+  plan.setPaintProperty('p-walls','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#9aa6b8']);
+  plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#0d1117']);
+  plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,1.5]);
+}
+function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b><br>WASD / arrows move · mouse looks · click FPS to capture`; }
+
+/* mobile stepped views (no-op on desktop) */
+function setStep(s){
+  if(!MOBILE) return; step=s;
+  for(const id of ['buildings','stack','fps','plan']){ const el=document.getElementById(id); el.classList.remove('show','inset'); }
+  if(s==='buildings') document.getElementById('buildings').classList.add('show');
+  else if(s==='stack') document.getElementById('stack').classList.add('show');
+  else { document.getElementById('fps').classList.add('show'); document.getElementById('plan').classList.add('show','inset'); }
+  const vis=(id,on)=>{const el=document.getElementById(id); el.style.display=on?'':'none';};
+  vis('info',s==='buildings'); vis('stackinfo',s==='stack'); vis('cross',s==='fps'); vis('hud',s==='fps'); vis('look',false);
+  const back=document.getElementById('back'); back.style.display=s==='buildings'?'none':'block'; back.textContent=s==='fps'?'‹ levels':'‹ buildings';
+  setTimeout(()=>({buildings:[bldgs],stack:[stk],fps:[fps,plan]}[s]).forEach(m=>m.resize()),30);
+}
+document.getElementById('back').onclick=()=>{ if(step==='fps') setStep('stack'); else if(step==='stack') setStep('buildings'); };
+// manual plan zoom (the views auto-follow the player, so a dedicated control
+// avoids fighting that auto-fit). Adjusts an offset on top of the follow zoom.
+document.getElementById('pz-in').onclick =()=>{ planZoomAdj=Math.min(4,planZoomAdj+0.6); };
+document.getElementById('pz-out').onclick=()=>{ planZoomAdj=Math.max(-3,planZoomAdj-0.6); };
+
+/* input */
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true; if(e.code.startsWith('Arrow'))e.preventDefault();});
+addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; turnTo=null; } });
+// re-evaluate mobile on resize so shrinking the desktop window switches into the
+// stepped single-view layout (and back), then resize every map.
+addEventListener('resize',()=>{
+  const m=isMobile();
+  if(m!==MOBILE){ MOBILE=m; document.body.classList.toggle('mobile',MOBILE);
+    if(MOBILE) setStep(step);
+    else { for(const id of ['buildings','stack','fps','plan']){ const el=document.getElementById(id); el.classList.remove('show','inset'); }
+      ['info','stackinfo','cross','hud'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display=''; });
+      document.getElementById('back').style.display='none'; }
+  }
+  [fps,bldgs,stk,plan].forEach(mp=>mp&&mp.resize());
+});
+
+/* movement, confined to the walkable area (slide along walls) */
+function move(stepM){
+  if(!stepM) return;
+  const dx=Math.cos(player.heading)*stepM, dy=Math.sin(player.heading)*stepM;
+  tryMove(dx,dy);
+}
+function tryMove(dx,dy){
+  const nlng=player.lng+dx/M_LON, nlat=player.lat+dy/M_LAT;
+  if(insideWalk(nlng,nlat)){ player.lng=nlng; player.lat=nlat; }
+  else if(insideWalk(player.lng+dx/M_LON,player.lat)) player.lng+=dx/M_LON;
+  else if(insideWalk(player.lng,player.lat+dy/M_LAT)) player.lat+=dy/M_LAT;
+}
+/* smoothly rotate the player to face a clicked plan target — no translation.
+   Eased, duration scales with the turn angle, capped at ~2 s. */
+function faceTarget(lng,lat){
+  const dxm=(lng-player.lng)*M_LON, dym=(lat-player.lat)*M_LAT;
+  if(!dxm&&!dym) return;
+  const dh=((Math.atan2(dym,dxm)-player.heading+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;  // → [-π,π]
+  turnTo={from:player.heading, delta:dh, dur:Math.min(2,Math.max(0.4,Math.abs(dh)/Math.PI*2)), el:0};
+}
+
+/* FPS eye (camera math verified mercator-correct) */
+const EYE_H=1.6, ZOOM_FPS=21, MOVE=3.0, TURN=2.4;
+function fpsCamera(){
+  const H=fps.getCanvas().clientHeight||500;
+  const mpp=EARTH*COSLAT/(512*Math.pow(2,ZOOM_FPS));
+  const focalPx=(fps.transform&&fps.transform.cameraToCenterDistance)||1.5*H;
+  const dWorld=focalPx*mpp;
+  const cx=player.lng+Math.cos(player.heading)*dWorld/M_LON, cy=player.lat+Math.sin(player.heading)*dWorld/M_LAT;
+  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:90,elevation:EYE_H});
+}
+/* highlight + describe the component under the crosshair */
+function lookAt(){
+  const c={x:fps.getCanvas().clientWidth/2,y:fps.getCanvas().clientHeight/2};
+  let fs=[]; try{ fs=fps.queryRenderedFeatures(c,{layers:['walls','pois3d','floor']}); }catch(_){}
+  const top=fs[0], key=top?top.source+'/'+top.id:null;
+  if(key!==lookKey){
+    if(lookRef) fps.setFeatureState(lookRef,{look:false});
+    lookRef=(top&&top.source==='walls3d')?{source:'walls3d',id:top.id}:null;   // only walls3d carries feature-state ids
+    lookKey=key; if(lookRef) fps.setFeatureState(lookRef,{look:true});
+  }
+  // aiming at a 3D component (wall or POI marker) selects it everywhere (gold in FPS + plan)
+  if(top&&top.properties&&top.properties._src!=null&&top.properties._src!==PICK){ PICK=top.properties._src; applyPick(); }
+  const look=document.getElementById('look');
+  if(top){ look.style.display='block'; look.innerHTML=describe(top.properties); }
+  else look.style.display='none';
+}
+
+let last=0, fc=0;
+function frame(t){
+  const dt=last?Math.min(0.05,(t-last)/1000):0; last=t;
+  const activeFps = !MOBILE || step==='fps';
+  if(activeFps){
+    if(keys.ArrowLeft) player.heading+=TURN*dt; if(keys.ArrowRight) player.heading-=TURN*dt;
+    const s=MOVE*dt, ch=Math.cos(player.heading), sh=Math.sin(player.heading); let dx=0,dy=0;
+    if(keys.KeyW||keys.ArrowUp){dx+=ch*s;dy+=sh*s;} if(keys.KeyS||keys.ArrowDown){dx-=ch*s;dy-=sh*s;}
+    if(keys.KeyA){dx+=-sh*s;dy+=ch*s;} if(keys.KeyD){dx+=sh*s;dy+=-ch*s;}
+    if(dx||dy||keys.ArrowLeft||keys.ArrowRight) turnTo=null;   // manual input cancels the auto-turn
+    if(dx||dy) tryMove(dx,dy);
+    else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
+      player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
+    fpsCamera();
+    plan.jumpTo({center:planCenter,zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
+    if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
+    if((fc++ % 5)===0) lookAt();
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

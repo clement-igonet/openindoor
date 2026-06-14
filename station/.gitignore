@@ -1,0 +1,3 @@
+# Overpass intermediate dumps — regenerate with data/fetch*.sh; keep only the GeoJSON.
+data/raw.json
+data/raw-buildings.json
