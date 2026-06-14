@@ -229,7 +229,8 @@ function resample(ln,N){ const cum=[0]; let total=0;
    treads) flanked by two glass-style side rails. `esc`=1 if conveying.
    Each piece carries _src (whole run highlights together) + _base/_top. */
 /* nearest mapped level above (d>0) / below (d<0) the active one */
-function nextLevel(d){ const c=SEL_LEVELS.filter(l=>d>0?l>activeLevel:l<activeLevel); return c.length?(d>0?Math.min(...c):Math.max(...c)):null; }
+const levelHasFloor=lv=>floorsOf(SEL).some(f=>parseLevels(f.properties.level).includes(lv));   // skip empty mezzanines (e.g. -0.5)
+function nextLevel(d){ const c=SEL_LEVELS.filter(l=>(d>0?l>activeLevel:l<activeLevel)&&levelHasFloor(l)); return c.length?(d>0?Math.min(...c):Math.max(...c)):null; }
 /* which way does a steps way go, from the level we're on? Prefer its level span
    (connecting lo↔hi → up from lo, down from hi), else incline/conveying. */
 function escDir(p){
@@ -251,12 +252,17 @@ function escalatorsFC(features){ const out=[], W=1.6;
     for(const ln of lines){ if(ln.length<2) continue;
       let run=0; for(let i=0;i+1<ln.length;i++) run+=Math.hypot((ln[i+1][0]-ln[i][0])*M_LON,(ln[i+1][1]-ln[i][1])*M_LAT);
       run=run||1; const rise=Math.min(4.5,Math.max(1.5,run*0.5)), N=Math.max(5,Math.min(18,Math.round(run)));
-      // treads: solid steps rising from the floor; _phase oriented by travel direction
-      resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
-        properties:{...p,_src:p._id,esc,part:'step',_phase:up?i/N:1-(i/N),_base:Math.max(0,(i/N)*rise-0.06),_top:((i+1)/N)*rise},geometry:{type:'MultiPolygon',coordinates:q}}); });
-      // two side balustrades (rise with the steps + ~0.95 m handrail)
-      for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
-        properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:(i/N)*rise,_top:((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
+      if(up){
+        // UP: a solid rising staircase from this floor, flanked by glass side rails
+        resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
+          properties:{...p,_src:p._id,esc,part:'step',_phase:i/N,_base:Math.max(0,(i/N)*rise-0.06),_top:((i+1)/N)*rise},geometry:{type:'MultiPolygon',coordinates:q}}); });
+        for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
+          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:(i/N)*rise,_top:((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
+      } else {
+        // DOWN: it descends below this floor → don't extrude up; show a flat ramp marking (band runs toward the bottom)
+        resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
+          properties:{...p,_src:p._id,esc,part:'step',_phase:1-(i/N),_base:0,_top:0.12},geometry:{type:'MultiPolygon',coordinates:q}}); });
+      }
     } }
   return {type:'FeatureCollection',features:out}; }
 
@@ -334,7 +340,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   // real OpenStreetMap raster as the ground, beneath the indoor floor
   fps.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
-  fps.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.92}});
+  fps.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.45}});
   fps.addLayer({id:'floor',type:'fill',source:'indoor',filter:['in',['get','indoor'],['literal',FLOORISH]],
     paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
@@ -387,7 +393,8 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
     paint:{'line-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f',['has','shop'],'#3fb950','#58a6ff'],'line-width':1.4}});
   plan.addLayer({id:'p-wall-line',type:'line',source:'level',filter:['==',['get','indoor'],'wall'],paint:{'line-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#8893a5'],'line-width':1.2}});
   plan.addLayer({id:'p-walls',type:'fill',source:'level',filter:['==',['get','indoor'],'column'],paint:{'fill-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#9aa6b8']}});
-  plan.addLayer({id:'p-stairs',type:'line',source:'level',filter:['==',['get','highway'],'steps'],paint:{'line-color':'#f0b429','line-width':2.4}});
+  plan.addLayer({id:'p-stairs',type:'line',source:'level',filter:['==',['get','highway'],'steps'],
+    paint:{'line-color':['case',['all',['has','conveying'],['!=',['get','conveying'],'no']],'#f0883e','#caa46a'],'line-width':4}});
   // clickable POINTS — doors / elevators / vending / point-shops: circles (Point geometry only)
   plan.addLayer({id:'p-poi',type:'circle',source:'level',filter:['all',['==',['geometry-type'],'Point'],['any',['has','shop'],['==',['get','highway'],'elevator'],['==',['get','amenity'],'vending_machine'],['has','door']]],
     paint:{'circle-radius':5,'circle-color':['case',['==',['get','highway'],'elevator'],'#f0b429',['has','shop'],'#3fb950',['has','door'],'#e8543b','#58a6ff'],'circle-stroke-width':['case',['==',['get','_id'],['literal',-1]],3,1.5],'circle-stroke-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#0d1117']}});
@@ -405,12 +412,15 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   // plan: hover → info; click → pick the component (highlighted in plan + FPS,
   // and the player turns to face it)
   const PLANQ=['p-poi','p-stairs','p-wall-line','p-area-line','p-area','p-walls','p-floor'];
-  plan.on('mousemove',e=>{ const fs=plan.queryRenderedFeatures(e.point,{layers:PLANQ}); const pi=document.getElementById('planinfo');
-    if(fs.length){ plan.getCanvas().style.cursor='pointer'; pi.style.display='block'; pi.innerHTML=describe(fs[0].properties); }
+  // query a small box (thin lines like escalators are otherwise hard to hit) and
+  // prefer an actual component (escalator/shop/door/room/wall) over plain floor
+  const planPick=e=>{ const fs=plan.queryRenderedFeatures([[e.point.x-6,e.point.y-6],[e.point.x+6,e.point.y+6]],{layers:PLANQ});
+    return fs.find(x=>{const p=x.properties; return p&&(p.highway||p.shop||p.door||p.amenity||p.indoor==='room'||p.indoor==='wall'||p.indoor==='column');})||fs[0]||null; };
+  plan.on('mousemove',e=>{ const f=planPick(e), pi=document.getElementById('planinfo');
+    if(f){ plan.getCanvas().style.cursor='pointer'; pi.style.display='block'; pi.innerHTML=describe(f.properties); }
     else { plan.getCanvas().style.cursor=''; pi.style.display='none'; } });
   plan.on('mouseout',()=>{ document.getElementById('planinfo').style.display='none'; plan.getCanvas().style.cursor=''; });
-  plan.on('click',e=>{ const fs=plan.queryRenderedFeatures(e.point,{layers:PLANQ});
-    const f=fs.find(x=>{const p=x.properties; return p&&(p.shop||p.door||p.highway||p.indoor==='room'||p.indoor==='wall'||p.indoor==='column');})||fs[0];
+  plan.on('click',e=>{ const f=planPick(e);
     if(!f){ PICK=null; repaint(); return; }
     PICK=(f.properties._id!=null?f.properties._id:null); repaint(); startFlash();   // selection syncs to FPS + flashes
     faceTarget(e.lngLat.lng,e.lngLat.lat); setStep('fps'); });   // turn to face it (no walking)
@@ -505,7 +515,10 @@ function landAt(fromPt,toPt){ const ux=toPt.lng-fromPt.lng, uy=toPt.lat-fromPt.l
 function startRide(z){ const {up,target}=escDir(z.p); if(target==null) return;
   const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
   const board=md(player,a)<md(player,b)?a:b, far=board===a?b:a;
-  ride={from:board,to:far,target,up,t:0,dur:up?Math.max(1.2,md(board,far)/2.2):0.7}; turnTo=null; }
+  turnTo=null;
+  if(up){ ride={from:board,to:far,target,up:true,t:0,dur:Math.max(1.2,md(board,far)/2.2)}; }   // ride to the top, then switch up
+  else { rideCool=1.6; focusLevel(target,true); landAt(board,far); }   // going down → switch to the level below right away
+}
 function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
   player.lng=ride.from.lng+(ride.to.lng-ride.from.lng)*t; player.lat=ride.from.lat+(ride.to.lat-ride.from.lat)*t;
   player.z=(ride.up?1:-1)*GAP*t;
@@ -523,6 +536,7 @@ function paintState(pickV){
   plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#3fb950','#58a6ff']);
   plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#8893a5']);
   plan.setPaintProperty('p-walls','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#9aa6b8']);
+  plan.setPaintProperty('p-stairs','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['all',['has','conveying'],['!=',['get','conveying'],'no']],'#f0883e','#caa46a']);
   plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#0d1117']);
   plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,['==',['get','_id'],['literal',h]],2.2,1.5]);
 }
