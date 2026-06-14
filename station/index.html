@@ -387,7 +387,7 @@ function applyPick(){ const v=(PICK==null?-1:PICK);
   plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#0d1117']);
   plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,1.5]);
 }
-function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b><br>WASD / arrows move · mouse looks · click FPS to capture`; }
+function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b><br>WASD / arrows move · mouse looks · <b>space</b> selects · click FPS to capture`; }
 
 /* mobile stepped views (no-op on desktop) */
 function setStep(s){
@@ -409,7 +409,8 @@ document.getElementById('pz-out').onclick=()=>{ planZoomAdj=Math.max(-3,planZoom
 
 /* input */
 const keys={};
-addEventListener('keydown',e=>{keys[e.code]=true; if(e.code.startsWith('Arrow'))e.preventDefault();});
+addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code.startsWith('Arrow')||e.code==='Space') e.preventDefault();
+  if(e.code==='Space' && (!MOBILE||step==='fps')) selectUnderCross(); });
 addEventListener('keyup',e=>keys[e.code]=false);
 addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; turnTo=null; } });
 // re-evaluate mobile on resize so shrinking the desktop window switches into the
@@ -471,6 +472,14 @@ function lookAt(){
   const look=document.getElementById('look');
   if(top){ look.style.display='block'; look.innerHTML=describe(top.properties); }
   else look.style.display='none';
+}
+/* Space: explicitly select whatever the crosshair is on (wall, POI, or floor) */
+function selectUnderCross(){
+  const c={x:fps.getCanvas().clientWidth/2,y:fps.getCanvas().clientHeight/2};
+  let fs=[]; try{ fs=fps.queryRenderedFeatures(c,{layers:['walls','pois3d','floor']}); }catch(_){}
+  const top=fs[0]; if(!top||!top.properties) return;
+  const id=(top.properties._src!=null?top.properties._src:top.properties._id);
+  if(id!=null){ PICK=id; applyPick(); }
 }
 
 let last=0, fc=0;
