@@ -25,6 +25,9 @@
   @keyframes spray{0%{transform:translate(0,0) scale(1);opacity:.9}100%{transform:translate(var(--dx),-90px) scale(.4);opacity:0}}
   #hud{position:absolute;top:10px;left:0;right:0;z-index:6;pointer-events:none;text-align:center;
        color:#214;font-size:22px;font-weight:700;text-shadow:1px 1px 0 #fff}
+  #goal{display:inline-block;margin:0 auto 6px;padding:6px 14px;border-radius:999px;
+        background:rgba(255,255,255,.78);color:#1c4012;font-size:14px;font-weight:600;
+        text-shadow:none;box-shadow:0 1px 4px rgba(0,0,0,.25)}
   #hint{position:absolute;bottom:8px;left:0;right:0;z-index:6;pointer-events:none;text-align:center;
         color:#fff;font-size:13px;text-shadow:1px 1px 0 #000;opacity:.85}
   #overlay{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
@@ -48,7 +51,10 @@
   <div id="cross"></div>
   <img id="hose"/>
   <div id="spray"></div>
-  <div id="hud">🍅 <span id="count">0</span> / 4</div>
+  <div id="hud">
+    <div id="goal">🎯 Goal: water all 4 tomato plants 🌱 — walk up to one and hold to spray 💧</div>
+    <div>🍅 <span id="count">0</span> / 4</div>
+  </div>
   <div id="hint">Hold to water · WASD / ↑↓ move · ←→ or mouse turn</div>
   <div id="touch"><div id="stick"><div id="knob"></div></div><div id="water">WATER 💧</div></div>
   <div id="overlay">
