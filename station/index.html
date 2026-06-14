@@ -85,6 +85,10 @@
 
 const CENTER=[2.374633,48.844533], LAT0=CENTER[1], COSLAT=Math.cos(LAT0*Math.PI/180);
 const M_LAT=111320, M_LON=111320*COSLAT, EARTH=40075016.686, WALL_H=3;
+// MapLibre's fill-extrusion shader clamps base/height to >=0, so we can't extrude
+// below ground. Lift the whole FPS scene onto a slab at BASE_Z metres → down
+// escalators / basements descend into positive-z space below it instead of being clamped.
+const BASE_Z=10;
 const GAP=5, SLAB=0.6, FLOORISH=['room','area','corridor','yes','level'];
 const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(v).split(';')){const n=parseFloat(p); if(!isNaN(n)) o.push(n);} return o; };
 
@@ -192,11 +196,11 @@ function bufferLine(coords,T){ const polys=[], h=T/2;
 function wallsFC(features,T){ const out=[];
   for(const f of features){ const ind=f.properties.indoor, g=f.geometry; if(!g) continue; const src=f.properties._id;
     if(ind==='wall'){ const lines=g.type==='LineString'?[g.coordinates]:g.type==='MultiLineString'?g.coordinates:g.type==='Polygon'?g.coordinates:[];
-      for(const ln of lines){ const p=bufferLine(ln,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
-    else if(ind==='column'){ out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:g}); }
+      for(const ln of lines){ const p=bufferLine(ln,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,_base:BASE_Z,_top:BASE_Z+WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
+    else if(ind==='column'){ out.push({type:'Feature',properties:{...f.properties,_src:src,_base:BASE_Z,_top:BASE_Z+WALL_H},geometry:g}); }
     else if((ind==='room'||f.properties.shop)&&(g.type==='Polygon'||g.type==='MultiPolygon')){
       const rings=g.type==='Polygon'?g.coordinates:[].concat(...g.coordinates);
-      for(const r of rings){ const p=bufferLine(r,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,h:WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
+      for(const r of rings){ const p=bufferLine(r,T); if(p.length) out.push({type:'Feature',properties:{...f.properties,_src:src,_base:BASE_Z,_top:BASE_Z+WALL_H},geometry:{type:'MultiPolygon',coordinates:p}}); } }
   } return {type:'FeatureCollection',features:out}; }
 /* point POIs → small extruded marker pillars for the first-person view */
 const POI_H={door:2.2,elevator:2.6,vending_machine:1.8,shop:2.4};
@@ -213,7 +217,7 @@ const escColorAnim=(ph,h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23
 function poisFC(features){ const out=[], S=0.45, dx=S/M_LON, dy=S/M_LAT;
   for(const f of features){ if(!f.geometry||f.geometry.type!=='Point') continue; const k=poiKind(f.properties); if(!k) continue;
     const [x,y]=f.geometry.coordinates;
-    out.push({type:'Feature',properties:{...f.properties,_src:f.properties._id,kind:k,h:POI_H[k]||2.2},
+    out.push({type:'Feature',properties:{...f.properties,_src:f.properties._id,kind:k,_base:BASE_Z,_top:BASE_Z+(POI_H[k]||2.2)},
       geometry:{type:'Polygon',coordinates:[[[x-dx,y-dy],[x+dx,y-dy],[x+dx,y+dy],[x-dx,y+dy],[x-dx,y-dy]]]}}); }
   return {type:'FeatureCollection',features:out}; }
 /* offset a polyline sideways by `off` metres (perpendicular) */
@@ -256,17 +260,17 @@ function escalatorsFC(features){ const out=[], W=1.6;
       let run=0; for(let i=0;i+1<ln.length;i++) run+=Math.hypot((ln[i+1][0]-ln[i][0])*M_LON,(ln[i+1][1]-ln[i][1])*M_LAT);
       run=run||1; const rise=Math.min(4.5,Math.max(1.5,run*0.5)), N=Math.max(5,Math.min(18,Math.round(run)));
       if(up){
-        // UP: a solid rising staircase from this floor, flanked by glass side rails
+        // UP: a solid rising staircase above the slab, flanked by glass side rails
         resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
-          properties:{...p,_src:p._id,esc,part:'step',_phase:i/N,_base:Math.max(0,(i/N)*rise-0.06),_top:((i+1)/N)*rise},geometry:{type:'MultiPolygon',coordinates:q}}); });
+          properties:{...p,_src:p._id,esc,part:'step',_phase:i/N,_base:BASE_Z+Math.max(0,(i/N)*rise-0.06),_top:BASE_Z+((i+1)/N)*rise},geometry:{type:'MultiPolygon',coordinates:q}}); });
         for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
-          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:(i/N)*rise,_top:((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
+          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:BASE_Z+(i/N)*rise,_top:BASE_Z+((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
       } else {
-        // DOWN: descends below this floor into a well (negative base); the floor is cut open (floorcut)
+        // DOWN: descends below the slab into a well (positive z thanks to BASE_Z); the floor is cut open (floorcut)
         resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
-          properties:{...p,_src:p._id,esc,part:'step',_phase:1-(i/N),_base:-((i+1)/N)*rise,_top:-(i/N)*rise+0.02},geometry:{type:'MultiPolygon',coordinates:q}}); });
+          properties:{...p,_src:p._id,esc,part:'step',_phase:1-(i/N),_base:BASE_Z-((i+1)/N)*rise,_top:BASE_Z-(i/N)*rise+0.02},geometry:{type:'MultiPolygon',coordinates:q}}); });
         for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
-          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:-((i+1)/N)*rise,_top:-(i/N)*rise+0.9},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
+          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:BASE_Z-((i+1)/N)*rise,_top:BASE_Z-(i/N)*rise+0.9},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
       }
     } }
   return {type:'FeatureCollection',features:out}; }
@@ -324,7 +328,7 @@ function describe(p){
 }
 
 const EMPTY={version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#1b2230'}}]};
-const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,minPitch:40,maxPitch:100,interactive:false,attributionControl:false,fadeDuration:0});
+const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,minPitch:80,maxPitch:100,interactive:false,attributionControl:false,fadeDuration:0});
 const bldgs=new maplibregl.Map({container:'buildings',style:EMPTY,center:CENTER,zoom:15.4,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const stk  =new maplibregl.Map({container:'stack',style:EMPTY,center:CENTER,zoom:15.8,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const plan =new maplibregl.Map({container:'plan',style:EMPTY,center:CENTER,zoom:17,pitch:0,bearing:0,attributionControl:false,fadeDuration:0});
@@ -357,15 +361,15 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
-  fps.addLayer({id:'floor',type:'fill',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
+  fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
+    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z}});   // raised slab; holes punched for down-escalator wells
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
-    paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
+    paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base']}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
   // so a point picked in the plan is highlightable in first person too
   fps.addSource('pois3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'pois3d',type:'fill-extrusion',source:'pois3d',
-    paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.96}});
+    paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.96}});
   // escalators / stairs as rising 3D ramps
   fps.addSource('esc3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'esc-3d',type:'fill-extrusion',source:'esc3d',
@@ -606,7 +610,7 @@ const keys={};
 addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code.startsWith('Arrow')||e.code==='Space') e.preventDefault();
   if(e.code==='Space' && (!MOBILE||step==='fps')) selectUnderCross(); });
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; player.pitch=Math.max(45,Math.min(95,player.pitch-e.movementY*0.06)); turnTo=null; } });
+addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; player.pitch=Math.max(85,Math.min(95,player.pitch-e.movementY*0.06)); turnTo=null; } });
 // re-evaluate mobile on resize so shrinking the desktop window switches into the
 // stepped single-view layout (and back), then resize every map.
 addEventListener('resize',()=>{
@@ -652,7 +656,7 @@ function fpsCamera(){
   // keep the eye at the player @ EYE_H and tilt the look-at point up/down with pitch
   const horiz=dWorld*Math.sin(pr);
   const cx=player.lng+Math.cos(player.heading)*horiz/M_LON, cy=player.lat+Math.sin(player.heading)*horiz/M_LAT;
-  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:player.pitch,elevation:EYE_H+(player.z||0)-dWorld*Math.cos(pr)});
+  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:player.pitch,elevation:BASE_Z+EYE_H+(player.z||0)-dWorld*Math.cos(pr)});
 }
 /* highlight + describe the component under the crosshair */
 /* the 3D component (POI marker preferred, then wall) under the crosshair —
