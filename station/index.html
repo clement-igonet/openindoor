@@ -86,9 +86,9 @@ const GAP=5, SLAB=0.6, FLOORISH=['room','area','corridor','yes','level'];
 const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(v).split(';')){const n=parseFloat(p); if(!isNaN(n)) o.push(n);} return o; };
 
 let INDOOR={type:'FeatureCollection',features:[]}, BUILDINGS={type:'FeatureCollection',features:[]};
-let SEL=[], SEL_LEVELS=[0], minLv=0, activeLevel=0, selGroup=null, hoverGroup=null, lookKey=null, lookRef=null, PICK=null, GROUP={}, MEMBERS={};
-let selInfo='hover a building', selName='Gare de Lyon', mePlan, planCenter=CENTER, planZoom=17, planZoomAdj=0, turnTo=null, WALK=[];
-const player={lng:CENTER[0],lat:CENTER[1],heading:0};
+let SEL=[], SEL_LEVELS=[0], minLv=0, activeLevel=0, selGroup=null, hoverGroup=null, PICK=null, HOVER=null, GROUP={}, MEMBERS={};
+let selInfo='hover a building', selName='Gare de Lyon', mePlan, planZoom=18, planZoomAdj=0, turnTo=null, WALK=[];
+const player={lng:CENTER[0],lat:CENTER[1],heading:0,pitch:90};   // pitch 85–95: look slightly down/up
 const compass=()=>Math.atan2(Math.cos(player.heading),Math.sin(player.heading))*180/Math.PI;
 // mobile = coarse pointer OR a narrow window — so a desktop window shrunk below
 // 820px switches to the stepped single-view layout (lets you simulate mobile).
@@ -176,7 +176,8 @@ function wallsFC(features,T){ const out=[];
 /* point POIs → small extruded marker pillars for the first-person view */
 const POI_H={door:2.2,elevator:2.6,vending_machine:1.8,shop:2.4};
 const poiKind=p=>p.highway==='elevator'?'elevator':p.amenity==='vending_machine'?'vending_machine':p.door?'door':p.shop?'shop':null;
-const poiColorExpr=v=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','kind'],'elevator'],'#f0b429',['==',['get','kind'],'shop'],'#3fb950',['==',['get','kind'],'door'],'#e8543b','#58a6ff'];
+// h = hovered _src (pale gold), v = selected _src (gold), else by kind
+const poiColor=(h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a',['==',['get','kind'],'elevator'],'#f0b429',['==',['get','kind'],'shop'],'#3fb950',['==',['get','kind'],'door'],'#e8543b','#58a6ff'];
 function poisFC(features){ const out=[], S=0.45, dx=S/M_LON, dy=S/M_LAT;
   for(const f of features){ if(!f.geometry||f.geometry.type!=='Point') continue; const k=poiKind(f.properties); if(!k) continue;
     const [x,y]=f.geometry.coordinates;
@@ -191,22 +192,32 @@ const stackColorExpr=()=>['case',['==',['get','_lv'],['literal',activeLevel]],'#
 function buildStack(){ const f=[]; for(const x of floorsOf(SEL)) for(const lv of parseLevels(x.properties.level)) f.push({type:'Feature',properties:{_lv:lv},geometry:x.geometry}); return {type:'FeatureCollection',features:f}; }
 
 /* describe an indoor component for hover/click info */
+const cap=s=>String(s).replace(/_/g,' ');
 function describe(p){
-  const name=p.name||(p.shop&&'shop')||p.amenity||(p.room&&'room')||p.indoor||'feature';
-  const b=[];
-  if(p.shop) b.push('shop · '+p.shop);
-  if(p.amenity) b.push(p.amenity.replace(/_/g,' '));
-  if(p.highway==='elevator') b.push('elevator');
-  if(p.highway==='steps') b.push(p.conveying&&p.conveying!=='no'?'escalator':'stairs');
-  if(p.door) b.push('door'+(p.door!=='yes'?' · '+p.door:''));
-  if(p.room) b.push('room · '+p.room);
-  if(p.indoor&&!p.shop) b.push('indoor · '+p.indoor);
-  if(p.level!=null) b.push('level '+p.level);
-  return `<b>${name}</b>${b.length?'<br>'+b.join(' · '):''}`;
+  // a human "kind" so we never just say "feature"
+  const kind = (p.shop&&('Shop'+(p.shop!=='yes'?' · '+cap(p.shop):'')))
+    || (p.amenity&&cap(p.amenity))
+    || (p.highway==='elevator'&&'Elevator')
+    || (p.highway==='steps'&&(p.conveying&&p.conveying!=='no'?'Escalator':'Stairs'))
+    || (p.door&&('Door'+(p.door!=='yes'?' · '+cap(p.door):'')))
+    || (p.entrance&&'Entrance')
+    || (p.railway&&cap(p.railway))
+    || (p.room&&('Room'+(p.room!=='yes'?' · '+cap(p.room):'')))
+    || (p.indoor&&('Indoor '+cap(p.indoor)))
+    || 'Feature';
+  const title=p.name||p.ref||kind, sub=(p.name&&kind!==title)?kind:'';
+  const seen=new Set(['name','ref','kind','h','_id','_src','_lv']);
+  const rows=[], order=['shop','amenity','room','indoor','level','repeat_on','highway','conveying','door','entrance','railway','public_transport','network','operator','brand','opening_hours','wheelchair','width','height'];
+  const lbl={repeat_on:'repeat on',public_transport:'transport',opening_hours:'hours'};
+  const row=k=>{ if(p[k]!=null&&!seen.has(k)){ seen.add(k); rows.push(`<span style="color:#8b949e">${lbl[k]||k}</span> ${cap(p[k])}`); } };
+  for(const k of order) row(k);
+  for(const k in p){ if(seen.has(k)||k[0]==='_'||k==='@id') continue; row(k); }   // any remaining OSM tags
+  let link=''; if(p['@id']) link=`<br><a href="https://www.openstreetmap.org/${p['@id']}" target="_blank" rel="noopener" style="color:#58a6ff">OSM ${p['@id']}</a>`;
+  return `<b>${title}</b>${sub?' <span style="color:#8b949e">· '+sub+'</span>':''}${rows.length?'<br>'+rows.join('<br>'):''}${link}`;
 }
 
 const EMPTY={version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#1b2230'}}]};
-const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,maxPitch:90,interactive:false,attributionControl:false,fadeDuration:0});
+const fps  =new maplibregl.Map({container:'fps',style:EMPTY,center:CENTER,zoom:21,pitch:90,bearing:0,minPitch:80,maxPitch:100,interactive:false,attributionControl:false,fadeDuration:0});
 const bldgs=new maplibregl.Map({container:'buildings',style:EMPTY,center:CENTER,zoom:15.4,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const stk  =new maplibregl.Map({container:'stack',style:EMPTY,center:CENTER,zoom:15.8,pitch:55,bearing:-17,maxPitch:85,attributionControl:false,fadeDuration:0});
 const plan =new maplibregl.Map({container:'plan',style:EMPTY,center:CENTER,zoom:17,pitch:0,bearing:0,attributionControl:false,fadeDuration:0});
@@ -239,14 +250,14 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   fps.addLayer({id:'floor',type:'fill',source:'indoor',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-color':['case',['==',['get','_id'],['literal',-1]],'#473f24','#2f3a4d'],'fill-outline-color':'#46566f'}});
+    paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
-    paint:{'fill-extrusion-color':['case',['any',['==',['get','_src'],['literal',-1]],['boolean',['feature-state','look'],false]],'#ffd23f','#9aa6b8'],'fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
+    paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
   // so a point picked in the plan is highlightable in first person too
   fps.addSource('pois3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'pois3d',type:'fill-extrusion',source:'pois3d',
-    paint:{'fill-extrusion-color':poiColorExpr(-1),'fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.96}});
+    paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.96}});
 
   // BUILDINGS — 3D shells, hover/select
   BUILDINGS.features.forEach((f,i)=>f.id=i); computeGroups();
@@ -300,8 +311,9 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
     else { plan.getCanvas().style.cursor=''; pi.style.display='none'; } });
   plan.on('mouseout',()=>{ document.getElementById('planinfo').style.display='none'; plan.getCanvas().style.cursor=''; });
   plan.on('click',e=>{ const fs=plan.queryRenderedFeatures(e.point,{layers:PLANQ});
-    if(!fs.length){ PICK=null; applyPick(); return; }
-    PICK=(fs[0].properties._id!=null?fs[0].properties._id:null); applyPick();
+    const f=fs.find(x=>{const p=x.properties; return p&&(p.shop||p.door||p.highway||p.indoor==='room'||p.indoor==='wall'||p.indoor==='column');})||fs[0];
+    if(!f){ PICK=null; repaint(); return; }
+    PICK=(f.properties._id!=null?f.properties._id:null); repaint(); startFlash();   // selection syncs to FPS + flashes
     faceTarget(e.lngLat.lng,e.lngLat.lat); setStep('fps'); });   // turn to face it (no walking)
 
   // FPS touch (mobile): drag to turn + walk
@@ -309,7 +321,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   cv.addEventListener('touchstart',e=>{const t=e.changedTouches[0];tId=t.identifier;tX=t.clientX;tY=t.clientY;e.preventDefault();},{passive:false});
   cv.addEventListener('touchmove',e=>{for(const t of e.changedTouches){if(t.identifier!==tId)continue;const ddx=t.clientX-tX,ddy=t.clientY-tY;tX=t.clientX;tY=t.clientY;player.heading-=ddx*0.005;move(-ddy*0.05);}e.preventDefault();},{passive:false});
   cv.addEventListener('touchend',e=>{for(const t of e.changedTouches)if(t.identifier===tId)tId=null;});
-  cv.addEventListener('click',()=>{ if(!MOBILE) cv.requestPointerLock?.(); });
+  cv.addEventListener('click',()=>{ selectUnderCross(); if(!MOBILE) cv.requestPointerLock?.(); });
 
   // default selection: the train_station group with the most indoor levels (the
   // Gare de Lyon hall) — name-matching alone would grab the "Ibis Gare de Lyon" hotel.
@@ -368,25 +380,33 @@ function focusLevel(lv){
   fps.getSource('pois3d').setData(poisFC(fc.features));
   plan.getSource('level').setData(fc);
   WALK=walkRings(fc.features);
-  const f=fitView(fc.features,plan,0.85); planCenter=f.center; planZoom=f.zoom; planZoomAdj=0;
+  planZoom=planFollowZoom(); planZoomAdj=0;
   const sp=spawnInside(fc); player.lng=sp[0]; player.lat=sp[1];
   stk.setPaintProperty('stack','fill-extrusion-color',stackColorExpr());
-  PICK=null; applyPick();
+  PICK=null; HOVER=null; repaint();
   stackInfo(); hud();
 }
-/* highlight the picked component (by stable _id) across the plan and FPS views */
-function applyPick(){ const v=(PICK==null?-1:PICK);
-  fps.setPaintProperty('walls','fill-extrusion-color',['case',['any',['==',['get','_src'],['literal',v]],['boolean',['feature-state','look'],false]],'#ffd23f','#9aa6b8']);
-  fps.setPaintProperty('pois3d','fill-extrusion-color',poiColorExpr(v));
-  fps.setPaintProperty('floor','fill-color',['case',['==',['get','_id'],['literal',v]],'#473f24','#2f3a4d']);
-  plan.setPaintProperty('p-floor','fill-color',['case',['==',['get','_id'],['literal',v]],'#473f24','#2f3a4d']);
-  plan.setPaintProperty('p-area','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['has','shop'],'#2e6f4e','#34507a']);
-  plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['has','shop'],'#3fb950','#58a6ff']);
-  plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#8893a5']);
-  plan.setPaintProperty('p-walls','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#9aa6b8']);
-  plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f','#0d1117']);
-  plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,1.5]);
+/* Paint hover (pale gold) + selection (solid gold) across the FPS and plan views.
+   The two are independent — hover (cross passing over) NEVER changes the selection
+   (PICK). Floor is never recoloured. `pickV` overrides PICK (used by the flash). */
+function paintState(pickV){
+  const v=(pickV===undefined?(PICK==null?-1:PICK):pickV), h=(HOVER==null?-2:HOVER);
+  fps.setPaintProperty('walls','fill-extrusion-color',['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a','#9aa6b8']);
+  fps.setPaintProperty('pois3d','fill-extrusion-color',poiColor(h,v));
+  plan.setPaintProperty('p-area','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#2e6f4e','#34507a']);
+  plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#3fb950','#58a6ff']);
+  plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#8893a5']);
+  plan.setPaintProperty('p-walls','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#9aa6b8']);
+  plan.setPaintProperty('p-poi','circle-stroke-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#0d1117']);
+  plan.setPaintProperty('p-poi','circle-stroke-width',['case',['==',['get','_id'],['literal',v]],3,['==',['get','_id'],['literal',h]],2.2,1.5]);
 }
+function repaint(){ paintState(); }
+/* brief flash of the just-selected component (gold ↔ its colour), then solid */
+let flashN=0, flashAcc=0, flashOn=true;
+function startFlash(){ if(PICK!=null){ flashN=6; flashAcc=0; flashOn=true; } }
+/* plan = a ~30 m-radius follow-cam centred on the player (heading-up) */
+const PLAN_RADIUS_M=30;
+function planFollowZoom(){ const cv=plan.getCanvas(), px=Math.min(cv.clientWidth||300,cv.clientHeight||300); return Math.log2(EARTH*COSLAT*px/(512*2*PLAN_RADIUS_M)); }
 function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b><br>WASD / arrows move · mouse looks · <b>space</b> selects · click FPS to capture`; }
 
 /* mobile stepped views (no-op on desktop) */
@@ -412,7 +432,7 @@ const keys={};
 addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code.startsWith('Arrow')||e.code==='Space') e.preventDefault();
   if(e.code==='Space' && (!MOBILE||step==='fps')) selectUnderCross(); });
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; turnTo=null; } });
+addEventListener('mousemove',e=>{ if(document.pointerLockElement){ player.heading-=e.movementX*0.0024; player.pitch=Math.max(85,Math.min(95,player.pitch-e.movementY*0.06)); turnTo=null; } });
 // re-evaluate mobile on resize so shrinking the desktop window switches into the
 // stepped single-view layout (and back), then resize every map.
 addEventListener('resize',()=>{
@@ -424,6 +444,7 @@ addEventListener('resize',()=>{
       document.getElementById('back').style.display='none'; }
   }
   [fps,bldgs,stk,plan].forEach(mp=>mp&&mp.resize());
+  planZoom=planFollowZoom();
 });
 
 /* movement, confined to the walkable area (slide along walls) */
@@ -448,43 +469,45 @@ function faceTarget(lng,lat){
 }
 
 /* FPS eye (camera math verified mercator-correct) */
-const EYE_H=1.6, ZOOM_FPS=21, MOVE=3.0, TURN=2.4;
+const EYE_H=1.6, ZOOM_FPS=21, MOVE=2.8, TURN=2.4;   // MOVE ≈ 10 km/h
 function fpsCamera(){
   const H=fps.getCanvas().clientHeight||500;
   const mpp=EARTH*COSLAT/(512*Math.pow(2,ZOOM_FPS));
   const focalPx=(fps.transform&&fps.transform.cameraToCenterDistance)||1.5*H;
-  const dWorld=focalPx*mpp;
-  const cx=player.lng+Math.cos(player.heading)*dWorld/M_LON, cy=player.lat+Math.sin(player.heading)*dWorld/M_LAT;
-  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:90,elevation:EYE_H});
+  const dWorld=focalPx*mpp, pr=player.pitch*Math.PI/180;
+  // keep the eye at the player @ EYE_H and tilt the look-at point up/down with pitch
+  const horiz=dWorld*Math.sin(pr);
+  const cx=player.lng+Math.cos(player.heading)*horiz/M_LON, cy=player.lat+Math.sin(player.heading)*horiz/M_LAT;
+  fps.jumpTo({center:[cx,cy],zoom:ZOOM_FPS,bearing:compass(),pitch:player.pitch,elevation:EYE_H-dWorld*Math.cos(pr)});
 }
 /* highlight + describe the component under the crosshair */
+/* the 3D component (POI marker preferred, then wall) under the crosshair —
+   a small box around centre so thin studs are easy to hit; floor is ignored */
+function crossComponent(){
+  const cx=fps.getCanvas().clientWidth/2, cy=fps.getCanvas().clientHeight/2, R=9;
+  let fs=[]; try{ fs=fps.queryRenderedFeatures([[cx-R,cy-R],[cx+R,cy+R]],{layers:['walls','pois3d']}); }catch(_){}
+  return fs.find(f=>f.source==='pois3d') || fs.find(f=>f.properties&&f.properties._src!=null) || null;
+}
+/* HOVER: the cross passing over a component → pale highlight + info only.
+   Never changes the selection (PICK), so a hover can't remove a selection. */
 function lookAt(){
-  const c={x:fps.getCanvas().clientWidth/2,y:fps.getCanvas().clientHeight/2};
-  let fs=[]; try{ fs=fps.queryRenderedFeatures(c,{layers:['walls','pois3d','floor']}); }catch(_){}
-  const top=fs[0], key=top?top.source+'/'+top.id:null;
-  if(key!==lookKey){
-    if(lookRef) fps.setFeatureState(lookRef,{look:false});
-    lookRef=(top&&top.source==='walls3d')?{source:'walls3d',id:top.id}:null;   // only walls3d carries feature-state ids
-    lookKey=key; if(lookRef) fps.setFeatureState(lookRef,{look:true});
-  }
-  // aiming at a 3D component (wall or POI marker) selects it everywhere (gold in FPS + plan)
-  if(top&&top.properties&&top.properties._src!=null&&top.properties._src!==PICK){ PICK=top.properties._src; applyPick(); }
+  const top=crossComponent();
+  const id=top?top.properties._src:null;
+  if(id!==HOVER){ HOVER=id; if(flashN===0) paintState(); }   // don't fight an in-progress flash
   const look=document.getElementById('look');
   if(top){ look.style.display='block'; look.innerHTML=describe(top.properties); }
   else look.style.display='none';
 }
-/* Space: explicitly select whatever the crosshair is on (wall, POI, or floor) */
+/* Space / click: lock-SELECT the component under the crosshair (never the floor) */
 function selectUnderCross(){
-  const c={x:fps.getCanvas().clientWidth/2,y:fps.getCanvas().clientHeight/2};
-  let fs=[]; try{ fs=fps.queryRenderedFeatures(c,{layers:['walls','pois3d','floor']}); }catch(_){}
-  const top=fs[0]; if(!top||!top.properties) return;
-  const id=(top.properties._src!=null?top.properties._src:top.properties._id);
-  if(id!=null){ PICK=id; applyPick(); }
+  const top=crossComponent(); if(!top||top.properties._src==null) return;
+  PICK=top.properties._src; repaint(); startFlash();
 }
 
 let last=0, fc=0;
 function frame(t){
   const dt=last?Math.min(0.05,(t-last)/1000):0; last=t;
+  if(flashN>0){ flashAcc+=dt; if(flashAcc>=0.1){ flashAcc=0; flashOn=!flashOn; paintState(flashOn?(PICK==null?-1:PICK):-1); if(--flashN<=0) repaint(); } }
   const activeFps = !MOBILE || step==='fps';
   if(activeFps){
     if(keys.ArrowLeft) player.heading+=TURN*dt; if(keys.ArrowRight) player.heading-=TURN*dt;
@@ -496,9 +519,9 @@ function frame(t){
     else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
       player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
     fpsCamera();
-    plan.jumpTo({center:planCenter,zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
+    plan.jumpTo({center:[player.lng,player.lat],zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
     if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
-    if((fc++ % 5)===0) lookAt();
+    if((fc++ % 2)===0) lookAt();   // hover detection — responsive
   }
   requestAnimationFrame(frame);
 }
