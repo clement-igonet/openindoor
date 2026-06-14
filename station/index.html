@@ -554,9 +554,8 @@ function startRide(z,board){ const {up,target}=escDir(z.p); if(target==null) ret
   const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
   const far=md(board,a)<md(board,b)?b:a;   // ride from the entrance to the opposite end
   turnTo=null; const run=md(board,far);
-  // both directions ride at rolling-escalator pace; up traverses the whole run
-  // before switching at the top, down switches quickly after a short descent
-  ride={from:board,to:far,target,up,t:0,dur: up ? Math.max(2.5,Math.min(7,run/ESC_SPEED)) : 1.0};
+  // both directions ride at the same rolling-escalator pace over the full run
+  ride={from:board,to:far,target,up,t:0,dur:Math.max(2.5,Math.min(7,run/ESC_SPEED))};
 }
 function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
   player.lng=ride.from.lng+(ride.to.lng-ride.from.lng)*t; player.lat=ride.from.lat+(ride.to.lat-ride.from.lat)*t;
