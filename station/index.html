@@ -357,9 +357,6 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
-  // real OpenStreetMap raster as the ground, beneath the indoor floor
-  fps.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
-  fps.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.45}});
   fps.addLayer({id:'floor',type:'fill',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
     paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
@@ -564,7 +561,7 @@ function paintState(pickV){
   const v=(pickV===undefined?(PICK==null?-1:PICK):pickV), h=(HOVER==null?-2:HOVER);
   fps.setPaintProperty('walls','fill-extrusion-color',['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a','#9aa6b8']);
   fps.setPaintProperty('pois3d','fill-extrusion-color',poiColor(h,v));
-  // esc-3d colour is driven every frame by the running-band animation in frame()
+  fps.setPaintProperty('esc-3d','fill-extrusion-color',escColor(h,v));
   plan.setPaintProperty('p-area','fill-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#2e6f4e','#34507a']);
   plan.setPaintProperty('p-area-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a',['has','shop'],'#3fb950','#58a6ff']);
   plan.setPaintProperty('p-wall-line','line-color',['case',['==',['get','_id'],['literal',v]],'#ffd23f',['==',['get','_id'],['literal',h]],'#ffe08a','#8893a5']);
@@ -701,8 +698,6 @@ function frame(t){
       if(rideCool<=0) for(const z of ESC){ if(!z.esc) continue; const bp=boardPoint(z); if(bp&&md(player,bp)<2.6){ startRide(z,bp); break; } }   // board only from the entrance end
     }
     fpsCamera();
-    if(ESC.length && (fc%2)===0) fps.setPaintProperty('esc-3d','fill-extrusion-color',escColorAnim(aPhase,HOVER==null?-2:HOVER,PICK==null?-1:PICK));   // running band
-    aPhase=(aPhase+dt*0.6)%1;
     plan.jumpTo({center:[player.lng,player.lat],zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
     if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
     if((fc%2)===0) lookAt();   // hover detection — responsive
