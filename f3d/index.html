@@ -1,918 +1,270 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>F3D — Festung 3D · OpenIndoor</title>
-  <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
-  <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
-    #map { position: absolute; inset: 0; }
-    /* hide MapLibre's default UI — this is a game, not a map */
-    .maplibregl-ctrl-attrib, .maplibregl-ctrl-logo { opacity: .25; }
-
-    #hud {
-      position: absolute; inset: 0; pointer-events: none; z-index: 2;  /* above #sprites (z-index:1) so the gun/crosshair draw over enemies */
-      font-family: "Courier New", monospace; color: #ffd23f;
-      text-shadow: 0 0 4px #000, 2px 2px 0 #000;
-    }
-    /* crosshair */
-    #hud::after {
-      content: ""; position: absolute; left: 50%; top: 50%;
-      width: 18px; height: 18px; margin: -9px 0 0 -9px;
-      background:
-        linear-gradient(#ffd23f,#ffd23f) center/2px 18px no-repeat,
-        linear-gradient(#ffd23f,#ffd23f) center/18px 2px no-repeat;
-      opacity: .8;
-    }
-    #controls {
-      position: absolute; left: 16px; bottom: 14px;
-      font-size: 13px; line-height: 1.5; letter-spacing: .04em;
-    }
-    #controls b { color: #fff; }
-
-    #overlay {
-      position: absolute; inset: 0; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; text-align: center;
-      background: rgba(8,6,2,.82); cursor: pointer; z-index: 10;
-      font-family: "Courier New", monospace; color: #ffd23f;
-    }
-    #overlay h1 { font-size: clamp(2rem, 6vw, 4rem); margin: 0 0 .2em; letter-spacing: .1em; text-shadow: 3px 3px 0 #7a1f1f; }
-    #overlay p { color: #e6d9b8; max-width: 540px; padding: 0 24px; line-height: 1.7; }
-    #overlay .play { margin-top: 24px; font-size: 1.3rem; color: #fff; animation: blink 1.1s steps(2,end) infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-    #overlay a { color: #ffd23f; }
-
-    /* touch / responsive */
-    html, body { touch-action: none; -webkit-user-select: none; user-select: none; }
-    .tbtn {
-      position: absolute; pointer-events: auto; z-index: 6;
-      border: 2px solid #ffd23f; background: rgba(20,20,28,.55); color: #ffd23f;
-      border-radius: 10px; font: bold 13px "Courier New", monospace; padding: 7px 11px;
-    }
-    #mapbtn { top: 8px; right: 8px; }
-    #firebtn {
-      right: 22px; bottom: 96px; width: 92px; height: 92px; border-radius: 50%;
-      background: rgba(150,30,30,.5); font-size: 18px; display: none;
-    }
-    /* touch devices: show the fire button, hide keyboard hints */
-    @media (pointer: coarse) { #firebtn { display: block; } #controls { display: none; } }
-    /* small screens: shrink the weapon so it doesn't dominate */
-    @media (max-width: 760px) { #weapon img { width: 58vw !important; } }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Garden — first-person tomato watering (MapLibre)</title>
+<link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#9fd8f0;font-family:system-ui,monospace}
+  #map{position:absolute;inset:0}
+  #cross{position:absolute;left:50%;top:50%;width:12px;height:12px;transform:translate(-50%,-50%);
+         pointer-events:none;z-index:5;opacity:.7}
+  #cross::before,#cross::after{content:"";position:absolute;background:#fff}
+  #cross::before{left:5px;top:0;width:2px;height:12px}#cross::after{top:5px;left:0;height:2px;width:12px}
+  /* garden hose nozzle (DOM, not a map object) */
+  #hose{position:absolute;bottom:0;left:50%;transform:translateX(-50%);z-index:6;pointer-events:none;
+        image-rendering:pixelated;transition:transform .05s}
+  #hose.on{transform:translateX(-50%) translateY(4px)}
+  #spray{position:absolute;bottom:120px;left:50%;transform:translateX(-50%);width:120px;height:120px;
+         z-index:6;pointer-events:none;display:none}
+  #spray.on{display:block}
+  .drop{position:absolute;bottom:0;left:50%;width:6px;height:6px;border-radius:50%;
+         background:#9fd8ff;opacity:.9;animation:spray .5s linear infinite}
+  @keyframes spray{0%{transform:translate(0,0) scale(1);opacity:.9}100%{transform:translate(var(--dx),-90px) scale(.4);opacity:0}}
+  #hud{position:absolute;top:10px;left:0;right:0;z-index:6;pointer-events:none;text-align:center;
+       color:#214;font-size:22px;font-weight:700;text-shadow:1px 1px 0 #fff}
+  #hint{position:absolute;bottom:8px;left:0;right:0;z-index:6;pointer-events:none;text-align:center;
+        color:#fff;font-size:13px;text-shadow:1px 1px 0 #000;opacity:.85}
+  #overlay{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
+           flex-direction:column;background:rgba(20,40,20,.75);color:#fff;text-align:center;cursor:pointer;padding:20px}
+  #overlay h1{margin:0 0 10px;font-size:26px;color:#bdf0a0}#overlay p{max-width:520px;line-height:1.5;font-size:14px;opacity:.9}
+  #overlay small{margin-top:16px;opacity:.7}.hidden{display:none!important}
+  /* touch */
+  #touch{display:none}body.touch #touch{display:block}body.touch{touch-action:none}
+  #stick{position:absolute;z-index:8;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;
+         background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.4);pointer-events:none;opacity:0;transition:opacity .1s}
+  #stick.on{opacity:1}#knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:rgba(255,255,255,.5)}
+  #water{position:absolute;right:24px;bottom:24px;z-index:8;width:96px;height:96px;border-radius:50%;
+         background:rgba(70,160,220,.45);border:3px solid rgba(255,255,255,.6);color:#fff;font:700 15px system-ui;
+         display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}
+  #water:active,#water.on{background:rgba(70,160,220,.85)}
+</style>
 </head>
 <body>
   <div id="map"></div>
-  <!-- Enemies are DOM <img> overlays positioned from map.project() every frame
-       (see updateSprites). Sits above the WebGL map, below the HUD/gun. -->
-  <div id="sprites" style="position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:1;"></div>
-
-  <div id="hud">
-    <div id="debug" style="position:absolute;top:8px;left:12px;font:11px/1.4 monospace;color:#5f5;text-shadow:1px 1px 0 #000;white-space:nowrap;"></div>
-    <canvas id="minimap" style="position:absolute;top:46px;right:8px;max-width:200px;max-height:180px;border:2px solid rgba(255,210,63,.55);background:rgba(0,0,0,.55);image-rendering:pixelated;"></canvas>
-    <button id="mapbtn" class="tbtn">MAP</button>
-    <button id="firebtn" class="tbtn">FIRE</button>
-    <div id="hitmark" style="position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border:3px solid #ff4d4d;border-radius:50%;opacity:0;transition:opacity .04s;pointer-events:none;"></div>
-    <div id="weapon" style="position:absolute;left:50%;bottom:-12px;transform:translateX(-50%);pointer-events:none;transition:transform .07s ease-out;">
-      <img id="weaponimg" src="weapon/bereta_04.png" alt="" style="display:block;width:380px;height:auto;image-rendering:pixelated;" />
-    </div>
-    <div id="controls">
-      <b>↑ ↓</b> / <b id="move-keys">W A S D</b> move &nbsp;·&nbsp; <b>← →</b> turn &nbsp;·&nbsp; <b>Alt + ← →</b> strafe &nbsp;·&nbsp; <b>Space</b> shoot &nbsp;·&nbsp; <b>mouse</b> look &nbsp;·&nbsp; <b>Esc</b> release
-    </div>
-  </div>
-
+  <div id="cross"></div>
+  <img id="hose"/>
+  <div id="spray"></div>
+  <div id="hud">🍅 <span id="count">0</span> / 4</div>
+  <div id="hint">Hold to water · WASD move · mouse turn</div>
+  <div id="touch"><div id="stick"><div id="knob"></div></div><div id="water">WATER 💧</div></div>
   <div id="overlay">
-    <h1>F3D</h1>
-    <p><b>Festung 3D</b> — a first-person maze inspired by the legendary
-       early-'90s shooter that defined the genre, rebuilt entirely with
-       <a href="https://maplibre.org/" target="_blank" rel="noopener">MapLibre GL</a>'s
-       3D extrusion engine and free camera. No raycaster — every wall is a real
-       georeferenced building.</p>
-    <p><b>Arrow keys</b> (or <b>WASD</b>/<b>ZQSD</b>) to move, <b>← →</b> or the <b>mouse</b> to turn.</p>
-    <div class="play">▶ Click to play</div>
+    <h1>🌱 Water the tomato garden</h1>
+    <p>Walk around the garden in first person and water the four tomato plants until they grow ripe.
+       Built on a map engine: the camera is a level horizon, the fence is an extrusion, the plants are billboards.
+       <br><br><b>Desktop:</b> WASD move · mouse turn · hold click to water.
+       <b>Touch:</b> left stick move · right side turn · hold WATER.</p>
+    <small>Tap / click to start</small>
   </div>
+<script>
+/* ===== tunables ===== */
+const CELL=4, EYE_H=1.6;
+const PITCH=90;            // true level horizon (the elevated-centre rig below makes 90 work)
+const EARTH=40075016.686, ZOOM=20;  // fixed world scale — decouples zoom/texture from pitch
+const MOVE=3.2, MOUSE_SENS=0.0024, TOUCH_SENS=0.0042, STICK_MAX=55, TOUCH_TURN=2.4, TOUCH_MOVE=14, DEAD=10;
+const DEG=1/111320;        // metres -> degrees near (0,0)
+const S=18;                // garden size (metres, square)
+const WATER_RANGE=7, WATER_CONE=0.38, WATER_RATE=0.45;   // grow ~one plant in ~2s
+const PLANTS=[{x:5,y:7},{x:13,y:7},{x:5,y:13},{x:13,y:13}].map(p=>({...p,grow:0,stage:0}));
+const player={x:9,y:2.6,heading:Math.PI/2};   // start at the south edge, facing into the garden (+y)
+let spraying=false, won=false;
 
-  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <script>
-    // ---------------------------------------------------------------------
-    // The level is plain ASCII — edit LEVEL to design maps by hand.
-    //   '.' / ' ' = floor          '@' = player start
-    //   walls (by texture):  # stone   K crackstone   B steel   W wood
-    //                        R brick   P purple        M moss    C cave
-    //   enemies:  g guard   s trooper   o officer   d hound   z brute   X boss
-    // ---------------------------------------------------------------------
-    const WALL_TEX = {
-      "#": "stone", "K": "crackstone", "B": "steel", "W": "wood",
-      "R": "brick", "P": "purple", "M": "moss", "C": "cave",
-    };
-    const ACTOR = { g: "guard", s: "trooper", o: "officer", d: "hound", z: "brute", X: "boss" };
-    const LEVEL = [
-      "............................#WWWWWWWWWWWW......................",
-      ".....######.................W...........#......................",
-      ".....#....#......###########W...........#WWWW..................",
-      ".....#....#......#..........#...........W...#..................",
-      ".....#.....#.....#..........................#..................",
-      ".....#.....#.....#..........W...........W...W..................",
-      ".....#####g#####.#...########...........W#WWW..................",
-      ".....#.........#.#...#......W...........W......................",
-      ".....#.........###...###.....#WWWW.#W#WWW......................",
-      ".....#.........#.......#........W...W..........................",
-      ".....#.................#........#...#..........................",
-      ".....#.........#.......#........#...#..........................",
-      "######.........#########........W...W..........................",
-      "#...##.........##...............#...W..........................",
-      "#...######.#####...........WWWWWW...WWW........................",
-      "#...#...#...##.............W..X.......#........................",
-      "##.##...#...#..............W..WWW...WWW........................",
-      "#...#####...#..............W..WWW...W#.........................",
-      "#...#...#...#..............W..WWW...#..........................",
-      "#.......#...#..............WWWWWW...#..........................",
-      "#...#...#...#...................#...W..........................",
-      "#...######.#####................WW.#W................BBBBBBBBBB",
-      "#...##.........#..........######.....#######.........B........B",
-      "#...##.........#..........#...............##.........B........B",
-      "#...##.........#..........#...............#BBBBBBBBBBB........B",
-      "#....#.........#..........#................B.........B........B",
-      "#..............#..........#...................................B",
-      "#....#.........#..........#................B.........B........B",
-      "#...##.........#..........#...............#BBB....BBBB........B",
-      "#...##.........#..........#...............###BB..B...B........B",
-      "#...##.........#..........######.....######...B..B...B........B",
-      "#...######.#####...............#BB.BB.........B..B...BBB.BB.BBB",
-      "#...#####...##..................B.X.B.........B..B......B..B...",
-      "#...#####...#...................B...B.........B..B.............",
-      "#...#...#...#...................B...B.........B..BBBBBBBBBBBB..",
-      "#.......#...#...................B.z.B.........B..BBB.B.B.B.BB..",
-      "#...#...#...#...................B...B.........B...B.........B..",
-      "#...#####...#...................B.d.B.........B.............B..",
-      "#...#####...#############.......B...B.........B...B.........B..",
-      "#................#......###.....B.o.B.........BBBBBB.B.B.B.BB..",
-      "#.......................zW#.....B...B...............B.B.B.B....",
-      "#................#......###.....B...B..........................",
-      "##################g######.......B...B..........................",
-      "..........##..#..#..#......BBBBBBB.BBBBBBB.....................",
-      ".........#y...#..#.#.......B....B...B....B.....................",
-      "..........##.....###.......B......s......B.....................",
-      "............#g####.........B....B...B....B.....................",
-      "............#..#...........B....BgggB....B.....................",
-      "............#..#...........BBBBBB...BBBBBB.....................",
-      "............####...........B....B...B....B.....................",
-      "...........................B.*...........B....................",
-      "...........................B....B...B....B.....................",
-      "...........................BBBBBB...BBBBBB.....................",
-      "...........................B.............B.....................",
-      "...........................B.............B.....................",
-      "...........................B......@......B.....................",
-      "...........................BBBBBBBBBBBBBBB.....................",
-    ];
-    // const LEVEL = [
-    //   "######RRRRRRBBBBBBWWWWWWW",
-    //   "#.......................W",
-    //   "#.@...R..g..B..s..W..o..W",
-    //   "#.....R...g.B...g.W...g.W",
-    //   "#.....R.....B.....W.....W",
-    //   "M.MMMMPP.PPP###.##RRRR.RR",
-    //   "M.....P.....#.....R.....R",
-    //   "M..d.....z.....g.....s..R",
-    //   "M...g.P...g.#...g.R...g.R",
-    //   "M.....P.....#.....R.....R",
-    //   "B.BBBBWW.WWWMMM.MMPPPP.PP",
-    //   "B.....W.....M.....P.....P",
-    //   "B..o..W..d..M..z..P..g..P",
-    //   "B...g.....g.....g....Xg.P",
-    //   "B.....W.....M.....P.....P",
-    //   "BBBBBBWWWWWWMMMMMMPPPPPPP",
-    // ];
-    const ROWS = LEVEL.length;
-    const COLS = Math.max(...LEVEL.map((row) => row.length));
-    const at = (r, c) => (LEVEL[r] && LEVEL[r][c]) || " ";
+const toLngLat=(x,y)=>[x*DEG,y*DEG];
+const wrap=a=>((a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+const stageOf=g=>Math.min(4,Math.floor(g*4+1e-6));
 
-    // ---------------------------------------------------------------------
-    // World scale. We lay the grid out in metres near the equator/prime
-    // meridian, then convert to lng/lat for MapLibre.
-    // ---------------------------------------------------------------------
-    const CELL   = 4;     // metres per grid cell
-    const WALL_H = 3;     // wall height (metres)
-    const EYE_H  = 1.75;  // nominal human eye height (metres)
-    const AIM_H  = 1.50;  // eye/aim height the camera actually sits at. With a level
-                          // 90° view the crosshair points here at EVERY distance, so
-                          // it always rests on a guard's pectoral (~1.50 m).
-    const PITCH     = 90;  // TRUE horizon view. At 90° the eye and the look-at centre
-                           // are at the SAME altitude, so the old EYE_H/cos(pitch)→∞
-                           // blow-up doesn't apply: we put the centre at elevation
-                           // EYE_H a fixed distance ahead (see updateCamera).
-    const MAX_PITCH = 90;  // MapLibre has allowed up to 180 since v5 (PR #4851)
-    const ZOOM   = 20;     // fixed world-scale. Decoupling zoom from pitch keeps the
-                           // wall-texture scale steady at any pitch (incl. a full 90°).
-    const DEG    = 1 / 111320; // degrees of lng/lat per metre (good enough near 0,0)
-    const EARTH  = 40075016.686; // equatorial circumference (m), for the zoom calc
+/* ===== procedural plant sprites (canvas -> addImage) ===== */
+function plantSprite(stage){
+  const w=48,h=64,cv=document.createElement('canvas');cv.width=w;cv.height=h;
+  const x=cv.getContext('2d'),cx=w/2,base=h-5;
+  x.fillStyle='#6b4a2b';x.beginPath();x.ellipse(cx,base,10,4,0,0,7);x.fill();      // soil mound
+  const stem=[3,14,24,30,32][stage], bush=[0,6,10,12,13][stage];
+  x.strokeStyle='#3f8a3a';x.lineWidth=3;x.beginPath();x.moveTo(cx,base);x.lineTo(cx,base-stem);x.stroke();
+  if(stage===0){ // seedling: two little leaves
+    x.fillStyle='#4fb04f';
+    x.beginPath();x.ellipse(cx-4,base-stem,4,2.4,-0.6,0,7);x.fill();
+    x.beginPath();x.ellipse(cx+4,base-stem,4,2.4,0.6,0,7);x.fill();
+    return x.getImageData(0,0,w,h);
+  }
+  x.fillStyle='#3f9a3f';
+  for(const [dx,dy] of [[0,-stem],[-5,-stem+5],[5,-stem+5],[0,-stem+10]]){x.beginPath();x.ellipse(cx+dx,base+dy,bush,bush*0.8,0,0,7);x.fill();}
+  x.fillStyle='#54bd54';x.beginPath();x.ellipse(cx-3,base-stem-2,bush*0.6,bush*0.5,0,0,7);x.fill();
+  if(stage>=3){x.fillStyle='#f4d23a';for(const [dx,dy] of [[-6,-stem+2],[6,-stem-2],[0,-stem-6]]){x.beginPath();x.arc(cx+dx,base+dy,2,0,7);x.fill();}}
+  if(stage>=4){for(const [dx,dy] of [[-5,-stem+6],[6,-stem+2],[-1,-stem-4],[4,-stem+9]]){
+    x.fillStyle='#e23b2e';x.beginPath();x.arc(cx+dx,base+dy,3.4,0,7);x.fill();
+    x.fillStyle='#ff8575';x.beginPath();x.arc(cx+dx-1,base+dy-1,1.1,0,7);x.fill();}}
+  return x.getImageData(0,0,w,h);
+}
+function hoseSprite(){
+  const cv=document.createElement('canvas');cv.width=180;cv.height=140;const c=cv.getContext('2d');
+  c.fillStyle='#2f7d3a';c.fillRect(78,70,28,70);                 // green hose body
+  c.fillStyle='#256631';c.fillRect(78,70,8,70);
+  c.fillStyle='#3a3f44';c.fillRect(72,40,40,34);                 // nozzle
+  c.fillStyle='#5a6068';c.fillRect(82,8,20,40);                  // barrel
+  c.fillStyle='#9fb0bc';c.fillRect(86,4,12,8);                   // tip
+  return cv.toDataURL();
+}
 
-    const toLngLat = (x, y) => [x * DEG, y * DEG];
+/* ===== geojson ===== */
+function plantsGeo(){return{type:'FeatureCollection',features:PLANTS.map((p,i)=>({
+  type:'Feature',properties:{icon:'plant'+p.stage},geometry:{type:'Point',coordinates:toLngLat(p.x,p.y)}}))};}
+function soilGeo(){return{type:'FeatureCollection',features:PLANTS.map(p=>{
+  const r=1.3,o=[[p.x-r,p.y-r],[p.x+r,p.y-r],[p.x+r,p.y+r],[p.x-r,p.y+r],[p.x-r,p.y-r]].map(([a,b])=>toLngLat(a,b));
+  return{type:'Feature',geometry:{type:'Polygon',coordinates:[o]}};})};}
+const m=0.4;                                                     // fence = square frame (outer ring + inner hole)
+const fenceGeo={type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[
+  [[-m,-m],[S+m,-m],[S+m,S+m],[-m,S+m],[-m,-m]].map(([a,b])=>toLngLat(a,b)),
+  [[0,0],[0,S],[S,S],[S,0],[0,0]].map(([a,b])=>toLngLat(a,b))]}};
 
-    // Build wall polygons + find the start cell from the ASCII level.
-    const wallFeatures = [];
-    let start = null;
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const ch = at(r, c);
-        if (ch === "@") start = { r, c };
-        if (!(ch in WALL_TEX)) continue;
-        const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
-        wallFeatures.push({
-          type: "Feature",
-          properties: { tex: WALL_TEX[ch] },
-          geometry: { type: "Polygon", coordinates: [[
-            toLngLat(x0, y0), toLngLat(x1, y0),
-            toLngLat(x1, y1), toLngLat(x0, y1), toLngLat(x0, y0),
-          ]] },
-        });
-      }
-    }
-    if (!start) {
-      // No '@' in the level — spawn on the open floor cell nearest the centre.
-      const cr = ROWS / 2, cc = COLS / 2; let bestD = Infinity;
-      for (let r = 0; r < ROWS; r++)
-        for (let c = 0; c < COLS; c++)
-          if (!(at(r, c) in WALL_TEX)) {
-            const d = (r - cr) ** 2 + (c - cc) ** 2;
-            if (d < bestD) { bestD = d; start = { r, c }; }
-          }
-      if (!start) start = { r: 1, c: 1 };
-    }
-    const wallsGeoJSON = { type: "FeatureCollection", features: wallFeatures };
+/* ===== map (stock MapLibre, we drive the camera) ===== */
+const map=new maplibregl.Map({
+  container:'map',style:{version:8,sources:{},layers:[]},
+  center:toLngLat(player.x,player.y),zoom:20,pitch:0,bearing:0,
+  interactive:false,maxPitch:95,attributionControl:false,fadeDuration:0
+});
+map.on('load',()=>{
+  for(let s=0;s<5;s++) map.addImage('plant'+s,plantSprite(s));
+  document.getElementById('hose').src=hoseSprite();
+  map.addSource('soil',{type:'geojson',data:soilGeo()});
+  map.addSource('fence',{type:'geojson',data:fenceGeo});
+  map.addSource('plants',{type:'geojson',data:plantsGeo()});
+  map.addLayer({id:'ground',type:'background',paint:{'background-color':'#5fae46'}});       // green ground
+  map.addLayer({id:'soil',type:'fill',source:'soil',paint:{'fill-color':'#6b4a2b'}});       // tilled beds
+  map.addLayer({id:'fence',type:'fill-extrusion',source:'fence',
+    paint:{'fill-extrusion-height':1.0,'fill-extrusion-base':0,'fill-extrusion-color':'#a9763f','fill-extrusion-vertical-gradient':true}});
+  map.addLayer({id:'plants',type:'symbol',source:'plants',
+    layout:{'icon-image':['get','icon'],'icon-size':0.85,'icon-anchor':'bottom',
+            'icon-allow-overlap':true,'icon-ignore-placement':true,'icon-pitch-alignment':'viewport','icon-rotation-alignment':'viewport'}});
+  map.addLayer({id:'sky',type:'sky',paint:{'sky-color':'#9fd8f0','horizon-color':'#cfeaf6','sky-horizon-blend':0.4}});
+  if(map.setCenterClampedToGround) map.setCenterClampedToGround(false);
+  updateCamera();
+  requestAnimationFrame(loop);
+});
 
-    // Floor: one polygon covering the whole grid.
-    const floorGeoJSON = {
-      type: "Feature", properties: {},
-      geometry: { type: "Polygon", coordinates: [[
-        toLngLat(0, 0), toLngLat(COLS * CELL, 0),
-        toLngLat(COLS * CELL, ROWS * CELL), toLngLat(0, ROWS * CELL), toLngLat(0, 0),
-      ]] },
-    };
+/* TRUE 90° horizon (same rig as f3d.html). At 90° the eye and the look-at
+   centre share altitude, so we place the centre at elevation EYE_H a fixed
+   distance dWorld straight ahead at a FIXED zoom; MapLibre then puts the eye on
+   the player at EYE_H looking dead level. dWorld uses the real focal length
+   (cameraToCenterDistance) so the eye lands exactly on the player.
+   (calculateCameraOptionsFromCameraLngLatAltRotation mis-solves for this tiny
+   near-(0,0) world — it shoves the centre ~10 km out at a low zoom.) */
+function updateCamera(){
+  const H=map.getCanvas().clientHeight||800;
+  const mpp=EARTH/(512*Math.pow(2,ZOOM));
+  const tr=map.transform, camPx=(tr&&tr.cameraToCenterDistance)||1.5*H;
+  const dWorld=camPx*mpp;
+  const bearing=Math.atan2(Math.cos(player.heading),Math.sin(player.heading))*180/Math.PI;
+  const cx=player.x+Math.cos(player.heading)*dWorld, cy=player.y+Math.sin(player.heading)*dWorld;
+  map.jumpTo({center:toLngLat(cx,cy),zoom:ZOOM,bearing,pitch:PITCH,elevation:EYE_H});
+}
 
-    // Enemy roster — original, generic types (no real-world factions/figures),
-    // with hit points + difficulty scaling adapted from classic FPS conventions.
-    // Difficulty via ?diff=baby|easy|normal|hard (default normal).
-    const DIFF = ({ baby: 0, easy: 1, normal: 2, hard: 3 })[
-      (location.search.match(/diff=(\w+)/) || [])[1]
-    ] ?? 2;
-    const TYPES = {        // h = figure height in metres (player eye ≈ 1.75)
-      guard:   { hp: [25, 25, 25, 25],       h: 1.75 },
-      trooper: { hp: [100, 100, 100, 100],   h: 1.80 },
-      hound:   { hp: [1, 1, 1, 1],           h: 1.82 },
-      officer: { hp: [50, 50, 50, 50],       h: 1.85 },
-      brute:   { hp: [45, 55, 55, 65],       h: 2.10 },
-      boss:    { hp: [300, 400, 500, 600],   h: 2.20 },
-    };
-    // ---------------------------------------------------------------------
-    // Sprite atlas config. Enemies are drawn by cropping ONE frame out of a
-    // per-type sprite sheet (via CSS background-position) — see the SHEETS map.
-    //
-    // Each sheet is a grid of `cols × rows` frames, each `fw × fh` px. A "pose"
-    // is one ROW; `dirs` columns of that row are the 8 viewing angles of the
-    // billboard (set dirs:1 for a non-directional image). `walkRows` are the
-    // rows that form the walk cycle; `deathFrames` is an [[col,row],…] sequence
-    // played once on death (last cell stays as the corpse).
-    // ---------------------------------------------------------------------
-    // Per-type sprite sheets (all ORIGINAL art). A sheet is a cols×rows grid of
-    // fw×fh cells; `dirs` columns of a pose-row are its 8 viewing angles; rows
-    // 1-4 are the walk cycle; row 5 is the death sequence (last cell = corpse).
-    // Types with no entry fall back to DEFAULT_SHEET. Tunables per sheet:
-    //   dirOffset  — rotate the column→angle map if facings look wrong/mirrored
-    //   bodyFrac   — figure width as a fraction of the cell (hit-box stays on the body)
-    const sheet = (o) => Object.assign({
-      cols: 8, rows: 7, fw: 64, fh: 64, dirs: 8,
-      standRow: 0, walkRows: [1, 2, 3, 4], walkFps: 6,
-      deathFrames: [[0, 5], [1, 5], [2, 5], [3, 5], [4, 5]], deathFps: 8,
-      dirOffset: 0, bodyFrac: 0.55,
-    }, o);
-    const SHEETS = {
-      guard:   sheet({ src: "enemies/guard_sprites.png",   fw: 64, fh: 64 }), // red warrior
-      trooper: sheet({ src: "enemies/trooper_sprites.png", fw: 65, fh: 65 }), // green soldier
-    };
-    const DEFAULT_SHEET = SHEETS.guard;
-    const sheetFor = (type) => SHEETS[type] || DEFAULT_SHEET;
-    const SIGHT = 52;   // metres: draw / allow hitting enemies out to here
-    // Enemies come straight from the ACTOR characters in the level.
-    const enemies = [];
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const type = ACTOR[at(r, c)];
-        if (type) enemies.push({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL, type, hp: TYPES[type].hp[DIFF],
-                                 alive: true, dir: Math.random() * Math.PI * 2, state: "idle" });
-      }
-    }
-    // Enemies are billboard <img> overlays, NOT MapLibre symbols. MapLibre's
-    // icon-size renders at a scale we can't reconcile with metres, so a guard
-    // came out ~3-4× too tall and the hit-box never matched the drawn figure.
-    // Instead we size each sprite straight from map.project(): on-screen height
-    // = figureHeight(m) × pixels-per-metre measured AT the enemy. That ties the
-    // sprite to the exact same screen geometry as the walls, so a 1.75 m guard
-    // is precisely 1.75/3 the height of a co-located 3 m wall, his feet sit on
-    // the floor, his head lands on the horizon (eye level) — and the very same
-    // rectangle is reused for hit detection.
-    const spriteLayer = document.getElementById("sprites");
+/* ===== movement: stay inside the fence ===== */
+function tryStep(dx,dy){
+  const lo=0.7, hi=S-0.7;
+  const nx=player.x+dx; if(nx>lo&&nx<hi) player.x=nx;
+  const ny=player.y+dy; if(ny>lo&&ny<hi) player.y=ny;
+}
 
-    // Returns the enemy's drawn rectangle in CSS px {x,y,w,h,dist}, or null if
-    // it must not be shown (too far, behind us, or hidden behind a wall).
-    // The camera is a level (90°) view at eye/aim height AIM_H, so we pin each
-    // enemy's AIM_H-height point (the pectoral, 1.50 m) to the crosshair (screen
-    // centre). Because the eye is also at AIM_H, this lands the feet exactly on
-    // the floor and the head at the right height — no float, no special cases —
-    // and the crosshair sits on every guard's chest at any distance.
-    function spriteRect(e, ccy) {
-      const dx = e.x - player.x, dy = e.y - player.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 0.001 || dist > SIGHT) return null;
-      const ad = Math.atan2(dy, dx) - player.heading;                 // skip behind us
-      if (Math.abs(Math.atan2(Math.sin(ad), Math.cos(ad))) > Math.PI / 2) return null;
-      if (!hasLineOfSight(player.x, player.y, e.x, e.y)) return null;
-      const feet = map.project(toLngLat(e.x, e.y));                   // for horizontal x
-      // pixels-per-metre at the enemy: project a point 1 m to the side and
-      // measure the screen distance (vertical scale ≈ horizontal at this depth).
-      const sx = -dy / dist, sy = dx / dist;                          // unit ⟂ (ground)
-      const side = map.project(toLngLat(e.x + sx, e.y + sy));
-      const pxPerM = Math.hypot(side.x - feet.x, side.y - feet.y);
-      if (!isFinite(pxPerM) || pxPerM <= 0) return null;
-      const H = TYPES[e.type].h, sh = sheetFor(e.type);
-      const h = pxPerM * H;                       // real height, undistorted
-      const topY = ccy - pxPerM * (H - AIM_H);    // pin the 1.50 m point to the crosshair
-      const w = h * (sh.fw / sh.fh);
-      return { x: feet.x - w / 2, y: topY, w, h, dist };
-    }
+/* ===== input — desktop ===== */
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const isTouch=matchMedia('(pointer: coarse)').matches||('ontouchstart'in window);
+if(isTouch) document.body.classList.add('touch');
+const overlay=document.getElementById('overlay'); let started=false;
+function start(){started=true;overlay.classList.add('hidden');if(!isTouch)document.body.requestPointerLock();}
+overlay.addEventListener('click',start);
+document.addEventListener('pointerlockchange',()=>{if(isTouch||!started)return;overlay.classList.toggle('hidden',document.pointerLockElement===document.body);});
+addEventListener('mousemove',e=>{if(document.pointerLockElement===document.body) player.heading-=e.movementX*MOUSE_SENS;});
+addEventListener('mousedown',e=>{if(document.pointerLockElement===document.body&&e.button===0) spraying=true;});
+addEventListener('mouseup',e=>{if(e.button===0) spraying=false;});
 
-    // Which atlas cell {col,row} to show for an enemy right now: viewing-angle
-    // column (8-dir billboard) + walk-cycle / death-sequence row, in its sheet.
-    function spriteFrame(e, now, sh) {
-      if (e.dead && sh.deathFrames.length) {                // play the death sequence
-        const i = Math.floor((now - e.deadAt) / 1000 * sh.deathFps);
-        const cell = sh.deathFrames[Math.min(i, sh.deathFrames.length - 1)];
-        return { col: cell[0], row: cell[1] };
-      }
-      let col = 0;
-      if (sh.dirs > 1) {                                    // facing relative to the viewer
-        const toCam = Math.atan2(player.y - e.y, player.x - e.x);
-        let rel = e.dir - toCam + sh.dirOffset * Math.PI / 180;
-        rel = (rel % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
-        col = Math.round(rel / (Math.PI * 2) * sh.dirs) % sh.dirs;
-      }
-      let row = sh.standRow;
-      if (e.state === "chase" || e.state === "patrol") {    // walk animation while moving
-        const wr = sh.walkRows;
-        row = wr[Math.floor(now / 1000 * sh.walkFps) % wr.length];
-      }
-      return { col, row };
-    }
+/* ===== input — touch ===== */
+const stickEl=document.getElementById('stick'),knobEl=document.getElementById('knob');
+let mId=null,aX=0,aY=0,cX=0,cY=0,lId=null,lX=0;
+function ts(e){
+  if(!started) start();
+  for(const t of e.changedTouches){
+    if(t.target&&t.target.id==='water'){spraying=true;document.getElementById('water').classList.add('on');continue;}
+    if(t.clientX<innerWidth/2&&mId===null){mId=t.identifier;aX=cX=t.clientX;aY=cY=t.clientY;
+      stickEl.style.left=t.clientX+'px';stickEl.style.top=t.clientY+'px';knobEl.style.transform='translate(0,0)';stickEl.classList.add('on');}
+    else if(lId===null){lId=t.identifier;lX=t.clientX;}
+  }
+  e.preventDefault();
+}
+function tm(e){
+  for(const t of e.changedTouches){
+    if(t.identifier===mId){cX=t.clientX;cY=t.clientY;
+      let dx=cX-aX,dy=cY-aY,len=Math.hypot(dx,dy)||1,cl=Math.min(len,STICK_MAX);
+      knobEl.style.transform=`translate(${dx/len*cl}px,${dy/len*cl}px)`;}
+    else if(t.identifier===lId){player.heading-=(t.clientX-lX)*TOUCH_SENS;lX=t.clientX;}
+  }
+  e.preventDefault();
+}
+function te(e){
+  for(const t of e.changedTouches){
+    if(t.identifier===mId){mId=null;stickEl.classList.remove('on');}
+    else if(t.identifier===lId){lId=null;}
+    if(t.target&&t.target.id==='water'){spraying=false;document.getElementById('water').classList.remove('on');}
+  }
+}
+addEventListener('touchstart',ts,{passive:false});
+addEventListener('touchmove',tm,{passive:false});
+addEventListener('touchend',te);addEventListener('touchcancel',te);
 
-    // Reposition / resize / animate / depth-sort every enemy's sprite each frame.
-    function updateSprites(now) {
-      const ccy = (map.getCanvas().clientHeight || 800) / 2;
-      for (const e of enemies) {
-        const sh = sheetFor(e.type);
-        if (!e._el) {
-          const el = document.createElement("div");
-          el.style.cssText = "position:absolute;background-repeat:no-repeat;" +
-            "image-rendering:pixelated;display:none;background-image:url('" + sh.src + "');";
-          spriteLayer.appendChild(el);
-          e._el = el;
-        }
-        const el = e._el;
-        // A corpse (dead) still draws its last death frame; a fully-gone enemy hides.
-        const show = e.alive || (e.dead && sh.deathFrames.length);
-        const r = show ? spriteRect(e, ccy) : null;
-        if (!r) { el.style.display = "none"; continue; }
-        const f = spriteFrame(e, now, sh);
-        el.style.display = "block";
-        el.style.left = r.x.toFixed(1) + "px";
-        el.style.top = r.y.toFixed(1) + "px";
-        el.style.width = r.w.toFixed(1) + "px";
-        el.style.height = r.h.toFixed(1) + "px";
-        // Crop one frame: scale the whole sheet so a cell == (w × h), then offset.
-        el.style.backgroundSize = (sh.cols * r.w).toFixed(1) + "px " + (sh.rows * r.h).toFixed(1) + "px";
-        el.style.backgroundPosition = (-f.col * r.w).toFixed(1) + "px " + (-f.row * r.h).toFixed(1) + "px";
-        el.style.zIndex = Math.max(0, Math.round(100000 - r.dist * 100)); // nearer on top
-      }
-    }
+/* ===== watering ===== */
+const sprayEl=document.getElementById('spray');
+for(let i=0;i<7;i++){const d=document.createElement('div');d.className='drop';d.style.setProperty('--dx',(i-3)*14+'px');d.style.animationDelay=(i*0.06)+'s';sprayEl.appendChild(d);}
 
-    // ---------------------------------------------------------------------
-    // Player state (metres + heading in radians; 0 = +x / east).
-    // ---------------------------------------------------------------------
-    const player = {
-      x: (start.c + 0.5) * CELL,
-      y: (start.r + 0.5) * CELL,
-      heading: -Math.PI / 2,   // start facing 90° to the right
-    };
-    // Collision uses two radii so we can stop FAR from a wall ahead without
-    // jamming narrow passages: LEAD is the forward stop distance (how far the eye
-    // halts before the wall it faces — keeps the level horizon view from peeking
-    // over the 3 m top); WIDTH is the body half-width for side clearance. WIDTH
-    // must stay < 2 m so 4 m corridors/doorways remain passable; LEAD may exceed it.
-    const LEAD  = 1.85;  // forward stop distance (m): enough buffer that the eye
-                         // never noses into a wall (so you can't peek over the 3 m
-                         // top), but small enough to move freely through the maze.
-    const WIDTH = 1.5;   // side half-width (m): 1.0 m of play in a 4 m corridor and
-                         // a 1.0 m doorway window, so threading gaps feels smooth.
+function water(dt){
+  let best=-1,bd=1e9;
+  for(let i=0;i<PLANTS.length;i++){
+    const p=PLANTS[i]; if(p.grow>=1) continue;
+    const dx=p.x-player.x,dy=p.y-player.y,dist=Math.hypot(dx,dy);
+    if(dist>WATER_RANGE) continue;
+    if(Math.abs(wrap(Math.atan2(dy,dx)-player.heading))>WATER_CONE) continue;
+    if(dist<bd){bd=dist;best=i;}
+  }
+  if(best<0) return;
+  const p=PLANTS[best]; p.grow=Math.min(1,p.grow+WATER_RATE*dt);
+  const st=stageOf(p.grow);
+  if(st!==p.stage){p.stage=st; map.getSource('plants').setData(plantsGeo());}
+  if(PLANTS.every(q=>q.grow>=1)) winGame();
+}
+function winGame(){
+  if(won) return; won=true; spraying=false;
+  overlay.querySelector('h1').textContent='🍅 Garden complete!';
+  overlay.querySelector('p').textContent='All four tomato plants are ripe. Bravo!';
+  overlay.querySelector('small').textContent='reload to play again';
+  overlay.classList.remove('hidden'); if(document.exitPointerLock) document.exitPointerLock();
+}
 
-    const isWall = (x, y) => {
-      const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
-      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
-      return at(r, c) in WALL_TEX;
-    };
-    // Enemies block the player like soft pillars, so you can't walk into one and
-    // have its billboard balloon across the screen. The block radius is kept under
-    // 2 m (vs the 4 m cell pitch) so you can still slip between/around guards.
-    const ENEMY_BLOCK = 1.7;   // stop this far (m) from a guard's centre
-    const enemyBlocks = (x, y) => {
-      for (const e of enemies)
-        if (e.alive && Math.hypot(e.x - x, e.y - y) < ENEMY_BLOCK) return true;
-      return false;
-    };
-
-    // Is the straight line between two points clear of walls? Grid DDA
-    // (Amanatides–Woo): walk every cell the ray crosses, between (not
-    // including) the start and target cells. Used to hide enemies behind walls.
-    const hasLineOfSight = (x0, y0, x1, y1) => {
-      let cx = Math.floor(x0 / CELL), cy = Math.floor(y0 / CELL);
-      const ex = Math.floor(x1 / CELL), ey = Math.floor(y1 / CELL);
-      if (cx === ex && cy === ey) return true;          // same cell — always visible
-      const dx = x1 - x0, dy = y1 - y0;
-      const stepX = dx >= 0 ? 1 : -1, stepY = dy >= 0 ? 1 : -1;
-      const tDeltaX = dx !== 0 ? Math.abs(CELL / dx) : Infinity;
-      const tDeltaY = dy !== 0 ? Math.abs(CELL / dy) : Infinity;
-      let tMaxX = dx !== 0 ? Math.abs(((dx > 0 ? (cx + 1) * CELL : cx * CELL) - x0) / dx) : Infinity;
-      let tMaxY = dy !== 0 ? Math.abs(((dy > 0 ? (cy + 1) * CELL : cy * CELL) - y0) / dy) : Infinity;
-      for (let guard = 0; guard < 4096; guard++) {
-        if (tMaxX < tMaxY) { cx += stepX; tMaxX += tDeltaX; }
-        else { cy += stepY; tMaxY += tDeltaY; }
-        if (cx === ex && cy === ey) return true;        // reached target cell
-        if (cy < 0 || cy >= ROWS || cx < 0 || cx >= COLS) return false;
-        if (at(cy, cx) in WALL_TEX) return false;        // wall in between
-      }
-      return true;
-    };
-
-    // ---------------------------------------------------------------------
-    // Map / style.
-    // ---------------------------------------------------------------------
-    const map = new maplibregl.Map({
-      container: "map",
-      interactive: false,          // we drive the camera ourselves
-      maxPitch: MAX_PITCH,
-      pitch: PITCH,
-      bearing: 0,
-      center: toLngLat(player.x, player.y),
-      zoom: 20,
-      style: {
-        version: 8,
-        sources: {
-          walls: { type: "geojson", data: wallsGeoJSON },
-          floor: { type: "geojson", data: floorGeoJSON },
-        },
-        layers: [
-          { id: "sky", type: "background", paint: { "background-color": "#20232e" } },
-          { id: "floor", type: "fill", source: "floor", paint: { "fill-color": "#3c3c3c" } },
-          {
-            id: "walls", type: "fill-extrusion", source: "walls",
-            paint: {
-              "fill-extrusion-pattern": ["get", "tex"],
-              "fill-extrusion-height": WALL_H,
-              "fill-extrusion-base": 0,
-              "fill-extrusion-vertical-gradient": true,
-            },
-          },
-          // VALIDATION RULERS: thin bands wrapping the walls at exactly 1 m (red)
-          // and 2 m (cyan) so wall-texture scale and sprite heights can be checked.
-          {
-            id: "ruler1m", type: "fill-extrusion", source: "walls",
-            paint: { "fill-extrusion-color": "#ff3b3b", "fill-extrusion-base": 0.97, "fill-extrusion-height": 1.03 },
-          },
-          {
-            id: "ruler2m", type: "fill-extrusion", source: "walls",
-            paint: { "fill-extrusion-color": "#28e0e0", "fill-extrusion-base": 1.97, "fill-extrusion-height": 2.03 },
-          },
-          {
-            id: "ceiling", type: "fill-extrusion", source: "floor",
-            paint: {
-              "fill-extrusion-color": "#23232b",
-              "fill-extrusion-base": WALL_H,
-              "fill-extrusion-height": WALL_H + 0.4,
-            },
-          },
-          // Enemies are drawn as DOM overlays (see updateSprites), not a layer.
-        ],
-      },
-    });
-
-    // ---------------------------------------------------------------------
-    // Input.
-    // ---------------------------------------------------------------------
-    const keys = Object.create(null);
-    addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code.startsWith("Arrow") || e.code.startsWith("Alt")) e.preventDefault(); });
-    addEventListener("keyup",   (e) => { keys[e.code] = false; });
-
-    const overlay = document.getElementById("overlay");
-    const canvas = map.getCanvas();
-    overlay.addEventListener("click", () => { overlay.style.display = "none"; canvas.requestPointerLock(); });
-    canvas.addEventListener("click", () => { if (document.pointerLockElement !== canvas) canvas.requestPointerLock(); });
-    // ?auto skips the overlay (used for headless screenshots / quick testing).
-    if (/[?&](auto|play)/.test(location.search)) overlay.style.display = "none";
-
-    const MOUSE_SENS = 0.0022;
-    addEventListener("mousemove", (e) => {
-      if (document.pointerLockElement !== canvas) return;
-      player.heading -= e.movementX * MOUSE_SENS;     // left/right = turn
-      const step = -e.movementY * 0.05;               // up = forward, down = back
-      if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
-    });
-    // Trackpad / wheel: a single two-finger pan turns (horizontal) AND moves
-    // forward/back (vertical) at the same time. (One finger with pointer-lock
-    // also turns via mousemove above.)
-    addEventListener("wheel", (e) => {
-      e.preventDefault();
-      player.heading -= e.deltaX * 0.004;            // horizontal pan = turn
-      const step = -e.deltaY * 0.02;                 // vertical pan = forward/back
-      if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
-    }, { passive: false });
-
-    // Shooting: Space fires — muzzle flash + recoil, and the nearest living
-    // enemy roughly under the crosshair (within range/angle) drops.
-    const weaponEl = document.getElementById("weapon");
-    const weaponImg = document.getElementById("weaponimg");
-    const hitmark = document.getElementById("hitmark");
-    let canFire = true;
-    let aim = "";          // HUD diagnostic for the last shot
-    const SHOT_DMG = 50;   // damage per shot
-    function fire() {
-      if (!canFire) return;
-      canFire = false;
-      setTimeout(() => { canFire = true; }, 420);
-      weaponImg.src = "weapon/bereta_02.png";
-      weaponEl.style.transform = "translateX(-50%) translateY(22px)";
-      setTimeout(() => {
-        weaponImg.src = "weapon/bereta_04.png";
-        weaponEl.style.transform = "translateX(-50%)";
-      }, 90);
-      // Pixel-precise hit: the crosshair (screen centre) must land inside the
-      // enemy's drawn rectangle — the SAME spriteRect used to draw it, so what
-      // you see is exactly what you can hit. Nearest visible enemy wins.
-      const cv = map.getCanvas();
-      const ccx = cv.clientWidth / 2, ccy = cv.clientHeight / 2;     // crosshair pixel
-      let best = null, bestDist = 1e9, near = null, nearD = 1e9, nearOn = false;
-      for (const e of enemies) {
-        if (!e.alive) continue;
-        const r = spriteRect(e, ccy);                                // null if hidden
-        if (!r) continue;
-        const bw = r.w * sheetFor(e.type).bodyFrac, bx = r.x + (r.w - bw) / 2; // body, not
-        const on = ccx >= bx && ccx <= bx + bw && ccy >= r.y && ccy <= r.y + r.h; // transparent sides
-
-        if (r.dist < nearD) { nearD = r.dist; near = e; nearOn = on; }
-        if (on && r.dist < bestDist) { bestDist = r.dist; best = e; }
-      }
-      aim = best ? `HIT ${best.type} hp${Math.max(0, best.hp - SHOT_DMG)}`
-                 : (near ? `MISS ${near.type} d${nearD.toFixed(1)} ${nearOn ? "on" : "off"}` : "no enemy");
-      if (best) {
-        best.hp -= SHOT_DMG;
-        if (best.hp <= 0) {
-          best.alive = false;                              // no longer targetable / blocking
-          if (sheetFor(best.type).deathFrames.length) { best.dead = true; best.deadAt = performance.now(); } // death
-          else if (best._el) best._el.style.display = "none";                                   // or vanish
-        } else if (best._el) {                             // alive: flash white to show the hit
-          best._el.style.filter = "brightness(2.4)";
-          setTimeout(() => { if (best._el) best._el.style.filter = ""; }, 70);
-        }
-        if (hitmark) {                                     // hit feedback flash
-          hitmark.style.opacity = "1";
-          setTimeout(() => { hitmark.style.opacity = "0"; }, 110);
-        }
-      }
-    }
-    addEventListener("keydown", (e) => { if (e.code === "Space") { e.preventDefault(); fire(); } });
-
-    // ---------------------------------------------------------------------
-    // Camera — TRUE first-person horizon view (pitch 90°).
-    // MapLibre orbits a `center` point. The classic trick (center on the ground,
-    // eye D·cos(pitch) above it) divides by zero at 90° — that's why we were
-    // stuck at 89°. The escape: at 90° the eye and the center sit at the SAME
-    // altitude, so we instead place the center at elevation EYE_H, a fixed
-    // distance `dWorld` straight ahead, at a FIXED zoom. MapLibre then puts the
-    // eye exactly dWorld back along the level look ray — i.e. on the player, at
-    // EYE_H, looking dead level. `elevation` is honoured because we call
-    // setCenterClampedToGround(false) on load. Fixed zoom also means the
-    // wall-texture scale no longer rides on pitch.
-    //   bearing = compass dir of forward = atan2(east, north) = atan2(cos h, sin h)
-    // ---------------------------------------------------------------------
-    let lastError = "";
-    function updateCamera() {
-      try {
-        const H = map.getCanvas().clientHeight || 800;
-        const mpp = EARTH / (512 * Math.pow(2, ZOOM));   // metres per pixel (lat ≈ 0)
-        // Use MapLibre's ACTUAL focal length (cameraToCenterDistance, px) so the
-        // eye lands exactly on the player — otherwise it drifts ahead and the
-        // camera noses into walls despite the player-radius collision.
-        const tr = map.transform;
-        const camPx = (tr && tr.cameraToCenterDistance) || 1.5 * H;
-        const dWorld = camPx * mpp;                      // eye→centre distance (m)
-        const bearing = Math.atan2(Math.cos(player.heading), Math.sin(player.heading)) * 180 / Math.PI;
-        const cx = player.x + Math.cos(player.heading) * dWorld;
-        const cy = player.y + Math.sin(player.heading) * dWorld;
-        map.jumpTo({ center: toLngLat(cx, cy), zoom: ZOOM, bearing, pitch: PITCH, elevation: AIM_H });
-      } catch (err) {
-        lastError = String(err && err.message || err);
-      }
-    }
-
-    // ---------------------------------------------------------------------
-    // Game loop.
-    // ---------------------------------------------------------------------
-    const MOVE = 12;     // m/s
-    const TURN = 2.4;    // rad/s
-    let last = 0;
-
-    function stepAxis(dx, dy) {
-      // Resolve each axis separately, probing the player's FULL width (3 points
-      // across the leading edge) so you can't corner-cut or pass through walls.
-      if (dx !== 0) {
-        const nx = player.x + dx, px = nx + Math.sign(dx) * LEAD;
-        if (!isWall(px, player.y) &&
-            !isWall(px, player.y - WIDTH) &&
-            !isWall(px, player.y + WIDTH) &&
-            !enemyBlocks(nx, player.y)) player.x = nx;
-      }
-      if (dy !== 0) {
-        const ny = player.y + dy, py = ny + Math.sign(dy) * LEAD;
-        if (!isWall(player.x, py) &&
-            !isWall(player.x - WIDTH, py) &&
-            !isWall(player.x + WIDTH, py) &&
-            !enemyBlocks(player.x, ny)) player.y = ny;
-      }
-    }
-    function tryStep(dx, dy) {
-      // Sub-step so fast movement can never tunnel through a wall in one frame.
-      const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (WIDTH * 0.5)));
-      for (let i = 0; i < n; i++) stepAxis(dx / n, dy / n);
-    }
-
-    // ---------------------------------------------------------------------
-    // Enemy AI: each guard wanders (patrol) until it gets a clear line of
-    // sight to the player within DETECT metres, then turns to face and closes
-    // in, stopping ATTACK_GAP away. Movement is collision-checked against walls,
-    // the player, and other guards so they don't clip through or pile up.
-    // ---------------------------------------------------------------------
-    const PATROL_SPEED = 1.4;   // m/s wandering
-    const CHASE_SPEED  = 3.4;   // m/s hunting the player
-    const DETECT       = 42;    // sight range (m)
-    const ATTACK_GAP   = 3.0;   // hold this far (m) from the player when chasing
-    const E_R          = 0.8;   // enemy body radius for wall probing (m)
-    function enemyCanStep(e, nx, ny) {
-      if (isWall(nx + E_R, ny) || isWall(nx - E_R, ny) ||
-          isWall(nx, ny + E_R) || isWall(nx, ny - E_R)) return false;
-      if (Math.hypot(player.x - nx, player.y - ny) < ENEMY_BLOCK) return false; // not onto player
-      for (const o of enemies) {                                                // not onto each other
-        if (o !== e && o.alive && Math.hypot(o.x - nx, o.y - ny) < 1.6) return false;
-      }
-      return true;
-    }
-    function updateAI(dt) {
-      for (const e of enemies) {
-        if (!e.alive) continue;
-        const dx = player.x - e.x, dy = player.y - e.y;
-        const dist = Math.hypot(dx, dy);
-        const sees = dist < DETECT && hasLineOfSight(e.x, e.y, player.x, player.y);
-        let speed;
-        if (sees) {                              // chase: face the player, close in
-          e.state = "chase";
-          e.dir = Math.atan2(dy, dx);
-          speed = dist > ATTACK_GAP ? CHASE_SPEED : 0;
-        } else {                                 // patrol: keep wandering
-          e.state = "patrol";
-          speed = PATROL_SPEED;
-        }
-        if (speed <= 0) continue;
-        const step = speed * dt;
-        const nx = e.x + Math.cos(e.dir) * step, ny = e.y + Math.sin(e.dir) * step;
-        if (enemyCanStep(e, nx, ny)) { e.x = nx; e.y = ny; }
-        else if (!sees) e.dir += Math.PI / 2 + Math.random() * Math.PI; // blocked → turn away
-        else e.dir += (Math.random() - 0.5) * 1.2;                      // wall while chasing → sidestep
-      }
-    }
-
-    const dbg = document.getElementById("debug");
-
-    // Mini-map (top-down view of the maze + player) -----------------------
-    const mini = document.getElementById("minimap");
-    const mctx = mini.getContext("2d");
-    const MCELL = 9;                 // pixels per grid cell on the minimap
-    mini.width = COLS * MCELL;
-    mini.height = ROWS * MCELL;
-    function drawMinimap() {
-      // Y is flipped (canvas down -> world north up) so the minimap orientation
-      // and turn direction match the MapLibre scene.
-      const H = mini.height;
-      mctx.clearRect(0, 0, mini.width, H);
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          mctx.fillStyle = (at(r, c) in WALL_TEX) ? "#8a8a8a" : "#1d1d22";
-          mctx.fillRect(c * MCELL, H - (r + 1) * MCELL, MCELL - 1, MCELL - 1);
-        }
-      }
-      const px = (player.x / CELL) * MCELL;
-      const py = H - (player.y / CELL) * MCELL;
-      mctx.strokeStyle = "#ffd23f";
-      mctx.lineWidth = 2;
-      mctx.beginPath();
-      mctx.moveTo(px, py);
-      mctx.lineTo(px + Math.cos(player.heading) * MCELL * 1.8,
-                  py - Math.sin(player.heading) * MCELL * 1.8);
-      mctx.stroke();
-      mctx.fillStyle = "#ffd23f";
-      mctx.beginPath();
-      mctx.arc(px, py, 2.5, 0, Math.PI * 2);
-      mctx.fill();
-
-      // Distance legend: a 10 m scale bar with end ticks (bottom-left corner).
-      const barM = 10, barPx = barM * (MCELL / CELL);
-      const bx = 5, by = H - 6;
-      mctx.strokeStyle = "#ffd23f"; mctx.lineWidth = 1.5;
-      mctx.beginPath();
-      mctx.moveTo(bx, by);            mctx.lineTo(bx + barPx, by);       // bar
-      mctx.moveTo(bx, by - 3);        mctx.lineTo(bx, by + 3);           // left tick
-      mctx.moveTo(bx + barPx, by - 3);mctx.lineTo(bx + barPx, by + 3);   // right tick
-      mctx.stroke();
-      mctx.fillStyle = "#ffd23f";
-      mctx.font = "10px monospace"; mctx.textBaseline = "bottom";
-      mctx.fillText(barM + " m", bx + 2, by - 4);
-    }
-
-    // Map toggle (M key / MAP button) — hidden by default on small screens.
-    const mapbtn = document.getElementById("mapbtn");
-    let mapVisible = window.innerWidth > 760;
-    const applyMap = () => { mini.style.display = mapVisible ? "block" : "none"; };
-    applyMap();
-    const toggleMap = () => { mapVisible = !mapVisible; applyMap(); };
-    mapbtn.addEventListener("click", toggleMap);
-    addEventListener("keydown", (e) => { if (e.code === "KeyM") toggleMap(); });
-
-    // Touch: FIRE button + drag on the canvas to turn (horizontal) and move
-    // forward/back (vertical), so it's playable on a phone.
-    const firebtn = document.getElementById("firebtn");
-    const onFire = (e) => { e.preventDefault(); fire(); };
-    firebtn.addEventListener("touchstart", onFire, { passive: false });
-    firebtn.addEventListener("mousedown", onFire);
-    let tId = null, tX = 0, tY = 0;
-    canvas.addEventListener("touchstart", (e) => {
-      const t = e.changedTouches[0]; tId = t.identifier; tX = t.clientX; tY = t.clientY;
-      overlay.style.display = "none";
-      e.preventDefault();
-    }, { passive: false });
-    canvas.addEventListener("touchmove", (e) => {
-      for (const t of e.changedTouches) {
-        if (t.identifier !== tId) continue;
-        const dx = t.clientX - tX, dy = t.clientY - tY; tX = t.clientX; tY = t.clientY;
-        player.heading -= dx * 0.005;                  // horizontal drag = turn
-        const step = -dy * 0.04;                       // vertical drag = forward/back
-        if (step) tryStep(Math.cos(player.heading) * step, Math.sin(player.heading) * step);
-      }
-      e.preventDefault();
-    }, { passive: false });
-    canvas.addEventListener("touchend", (e) => {
-      for (const t of e.changedTouches) if (t.identifier === tId) tId = null;
-    });
-
-    let ticks = 0;
-    function frame(t) {
-      try {
-        const dt = last ? Math.min(0.05, (t - last) / 1000) : 0;
-        last = t; ticks++;
-
-        // Turn with arrows — unless Alt is held, which makes ←/→ strafe
-        // (classic), so you can turn and strafe at once. A/D (ZQSD) always strafe.
-        const alt = keys.AltLeft || keys.AltRight;
-        if (!alt && keys.ArrowLeft)  player.heading += TURN * dt;
-        if (!alt && keys.ArrowRight) player.heading -= TURN * dt;
-
-        // Move. event.code is physical-position based, so KeyW/A/S/D map to the
-        // same physical keys on QWERTY (WASD) and AZERTY (ZQSD).
-        const fwd = MOVE * dt;
-        const ch = Math.cos(player.heading), sh = Math.sin(player.heading);
-        let dx = 0, dy = 0;
-        if (keys.KeyW || keys.ArrowUp)   { dx += ch * fwd; dy += sh * fwd; }
-        if (keys.KeyS || keys.ArrowDown) { dx -= ch * fwd; dy -= sh * fwd; }
-        if (keys.KeyA || (alt && keys.ArrowLeft))  { dx += -sh * fwd; dy += ch * fwd; }  // strafe left
-        if (keys.KeyD || (alt && keys.ArrowRight)) { dx +=  sh * fwd; dy += -ch * fwd; } // strafe right
-        if (dx || dy) tryStep(dx, dy);
-
-        updateAI(dt);                                // guards patrol / chase
-        updateCamera();
-        drawMinimap();
-        updateSprites(t);                            // position/size/animate enemy sprites
-
-        if (dbg) {
-          const pressed = ["KeyW","KeyA","KeyS","KeyD","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"]
-            .filter((k) => keys[k]);
-          const c = map.getCenter();
-          dbg.textContent =
-            "player " + player.x.toFixed(1) + "," + player.y.toFixed(1) + "m" +
-            " hd " + ((player.heading * 180 / Math.PI) % 360).toFixed(0) + "°" +
-            "  |  cam.center " + (c.lng / DEG).toFixed(1) + "," + (c.lat / DEG).toFixed(1) + "m" +
-            " z" + map.getZoom().toFixed(2) +
-            " brg " + map.getBearing().toFixed(0) + "°" +
-            " pitch " + map.getPitch().toFixed(0) + "°" +
-            "  |  keys [" + pressed.join(" ") + "] loop " + ticks +
-            "  |  " + aim +
-            (lastError ? "  ERR " + lastError : "");
-        }
-      } catch (e) {
-        lastError = String(e && e.message || e);
-      }
-      requestAnimationFrame(frame);   // ALWAYS reschedule — input must never die
-    }
-
-    // Procedural, original masonry textures — beveled blocks with grout,
-    // edge highlight/shadow and stone grain. Generated on demand.
-    function makeTexture(id) {
-      const S = 128, BW = 64, BH = 32, BEV = 4;       // texture + brick size + bevel
-      const cv = document.createElement("canvas"); cv.width = cv.height = S;
-      const g = cv.getContext("2d");
-      const P = {
-        stone: { base: "#7c7c7c", light: "#a2a2a2", dark: "#4c4c4c", grout: "#2b2b2d" },
-        brick: { base: "#9d4f3c", light: "#c06d54", dark: "#5e2c20", grout: "#231410" },
-        blue:  { base: "#4a69b0", light: "#7090d6", dark: "#293c72", grout: "#141d36" },
-        mossy: { base: "#668155", light: "#88a472", dark: "#3a5030", grout: "#1c281a" },
-      }[id] || { base: "#7c7c7c", light: "#a2a2a2", dark: "#4c4c4c", grout: "#2b2b2d" };
-
-      g.fillStyle = P.grout; g.fillRect(0, 0, S, S);   // grout fills the gaps
-      for (let row = 0; row * BH < S; row++) {
-        const off = (row % 2) ? BW / 2 : 0;
-        for (let bx = -BW; bx < S; bx += BW) {
-          const x = bx + off + 1, y = row * BH + 1, w = BW - 2, h = BH - 2;
-          g.fillStyle = P.base; g.fillRect(x, y, w, h);
-          g.fillStyle = P.light;                          // lit top + left edge
-          g.fillRect(x, y, w, BEV); g.fillRect(x, y, BEV, h);
-          g.fillStyle = P.dark;                           // shadowed bottom + right
-          g.fillRect(x, y + h - BEV, w, BEV); g.fillRect(x + w - BEV, y, BEV, h);
-        }
-      }
-      // stone grain: per-pixel brightness jitter
-      const img = g.getImageData(0, 0, S, S), d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const n = (Math.random() * 30 - 15) | 0;
-        d[i] = Math.max(0, Math.min(255, d[i] + n));
-        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
-        d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
-      }
-      return img;
-    }
-    // Original enemy sprite (a generic uniformed guard), drawn at runtime.
-    function makeEnemyIcon() {
-      const W = 48, Hh = 80;
-      const cv = document.createElement("canvas"); cv.width = W; cv.height = Hh;
-      const g = cv.getContext("2d");
-      g.fillStyle = "#39402c"; g.fillRect(15, 54, 7, 24); g.fillRect(26, 54, 7, 24); // legs
-      g.fillStyle = "#566b3f"; g.fillRect(13, 30, 22, 26);                            // torso
-      g.fillStyle = "#4a5c36"; g.fillRect(8, 32, 6, 20); g.fillRect(34, 32, 6, 20);   // arms
-      g.fillStyle = "#222";    g.fillRect(6, 44, 34, 4);                              // gun
-      g.fillStyle = "#caa07a"; g.beginPath(); g.arc(24, 20, 9, 0, Math.PI * 2); g.fill(); // head
-      g.fillStyle = "#2b2b2f"; g.beginPath(); g.arc(24, 17, 10, Math.PI, 0); g.fill();
-      g.fillRect(14, 17, 20, 3);                                                       // helmet
-      return g.getImageData(0, 0, W, Hh);
-    }
-    // Each wall-texture id maps to one of the original tile PNGs.
-    const TILE = {
-      stone: "walls/000.png", crackstone: "walls/002.png", steel: "walls/012.png",
-      wood:  "walls/020.png", brick: "walls/026.png", purple: "walls/028.png",
-      moss:  "walls/030.png", cave:  "walls/032.png",
-    };
-    const loadingTex = new Set();
-    map.on("styleimagemissing", (e) => {
-      if (map.hasImage(e.id) || loadingTex.has(e.id)) return;
-      const url = TILE[e.id];
-      if (!url) { map.addImage(e.id, makeTexture(e.id)); return; }   // non-tile ids
-      loadingTex.add(e.id);                                          // avoid repeat loads
-      map.loadImage(url)
-        .then((img) => { if (img && img.data && !map.hasImage(e.id)) map.addImage(e.id, img.data); })
-        .catch(() => { if (!map.hasImage(e.id)) map.addImage(e.id, makeTexture(e.id)); });
-    });
-
-    // setCenterClampedToGround(false) so the camera centre can sit at elevation
-    // EYE_H (instead of being snapped to the floor) — required for the 90° rig.
-    map.on("load", () => {
-      try { map.setMaxPitch(MAX_PITCH); map.setCenterClampedToGround(false); } catch (_) {}
-    });
-    requestAnimationFrame(frame);     // start now; updateCamera() is guarded for pre-load
-
-    // AZERTY/QWERTY: input uses physical key codes, but relabel the HUD to the
-    // user's actual layout (e.g. "ZQSD" on AZERTY) via the Keyboard Map API.
-    (async () => {
-      try {
-        if (!navigator.keyboard || !navigator.keyboard.getLayoutMap) return;
-        const map = await navigator.keyboard.getLayoutMap();
-        const label = (code, fallback) => (map.get(code) || fallback).toUpperCase();
-        const wasd = ["KeyW", "KeyA", "KeyS", "KeyD"]
-          .map((c, i) => label(c, ["W", "A", "S", "D"][i])).join(" ");
-        const el = document.getElementById("move-keys");
-        if (el) el.textContent = wasd;
-      } catch (_) { /* unsupported — keep default WASD label */ }
-    })();
-  </script>
+/* ===== loop ===== */
+let prev=performance.now();
+function loop(now){
+  const dt=Math.min(0.05,(now-prev)/1000); prev=now;
+  // movement (keyboard + touch joystick), forward = heading
+  const h=player.heading, fx=Math.cos(h),fy=Math.sin(h),rx=Math.sin(h),ry=-Math.cos(h);
+  let fwd=0,str=0;
+  if(keys['KeyW'])fwd+=1; if(keys['KeyS'])fwd-=1; if(keys['KeyD'])str+=1; if(keys['KeyA'])str-=1;
+  if(mId!==null){
+    const ox=cX-aX,oy=cY-aY;
+    if(Math.abs(ox)>DEAD){player.heading-=Math.max(-1,Math.min(1,ox/STICK_MAX))*TOUCH_TURN*dt;}
+    if(Math.abs(oy)>DEAD){fwd+=-Math.max(-1,Math.min(1,oy/STICK_MAX))*TOUCH_MOVE/MOVE;}
+  }
+  let mx=fx*fwd+rx*str, my=fy*fwd+ry*str, ml=Math.hypot(mx,my);
+  if(ml>0){const sp=Math.min(1,ml)*MOVE*dt; tryStep(mx/ml*sp,my/ml*sp);}
+  // watering
+  sprayEl.classList.toggle('on',spraying&&!won);
+  document.getElementById('hose').classList.toggle('on',spraying&&!won);
+  if(spraying&&!won) water(dt);
+  // present
+  updateCamera();
+  document.getElementById('count').textContent=PLANTS.filter(p=>p.grow>=1).length;
+  requestAnimationFrame(loop);
+}
+</script>
 </body>
 </html>
