@@ -281,7 +281,7 @@ function footprintRing(ln,W){ const ring=lineOffset(ln,W/2).concat(lineOffset(ln
 function floorCutFC(features){ const strips=[];
   for(const f of features){ const p=f.properties; if(p.highway!=='steps'||!f.geometry||!(p.conveying&&p.conveying!=='no')||escDir(p).up) continue;
     const lines=f.geometry.type==='LineString'?[f.geometry.coordinates]:f.geometry.type==='MultiLineString'?f.geometry.coordinates:[];
-    for(const ln of lines) if(ln.length>=2){ const ring=footprintRing(ln,1.9); strips.push({ring,c:ringCentroid(ring)}); } }
+    for(const ln of lines) if(ln.length>=2){ const ring=footprintRing(ln,2.6); strips.push({ring,c:ringCentroid(ring)}); } }
   const out=[];
   for(const f of features){ if(!FLOORISH.includes(f.properties.indoor)||!f.geometry) continue;
     const isMulti=f.geometry.type==='MultiPolygon', polys=isMulti?f.geometry.coordinates:f.geometry.type==='Polygon'?[f.geometry.coordinates]:null; if(!polys) continue;
@@ -362,8 +362,6 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
-  fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z,'fill-extrusion-opacity':0.55}});   // raised slab; holes punched for down-escalator wells
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
     paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.6}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
@@ -375,6 +373,11 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('esc3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'esc-3d',type:'fill-extrusion',source:'esc3d',
     paint:{'fill-extrusion-color':escColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.97}});
+  // floor is drawn LAST + translucent: it has holes punched where escalators go
+  // down (floorcut) AND, being on top, blends over the descending steps below so
+  // the well reads through the ground instead of being depth-occluded
+  fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
+    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z,'fill-extrusion-opacity':0.5}});
   if(FPS_ESC_ONLY) ['floor','walls','pois3d'].forEach(id=>fps.setLayoutProperty(id,'visibility','none'));   // DEBUG: escalators only
 
   // BUILDINGS — 3D shells, hover/select
