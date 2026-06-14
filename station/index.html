@@ -262,11 +262,26 @@ function escalatorsFC(features){ const out=[], W=1.6;
         for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
           properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:(i/N)*rise,_top:((i+1)/N)*rise+0.95},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
       } else {
-        // DOWN: it descends below this floor → don't extrude up; show a flat ramp marking (band runs toward the bottom)
+        // DOWN: descends below this floor into a well (negative base); the floor is cut open (floorcut)
         resample(ln,N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],W); if(q.length) out.push({type:'Feature',
-          properties:{...p,_src:p._id,esc,part:'step',_phase:1-(i/N),_base:0,_top:0.12},geometry:{type:'MultiPolygon',coordinates:q}}); });
+          properties:{...p,_src:p._id,esc,part:'step',_phase:1-(i/N),_base:-((i+1)/N)*rise,_top:-(i/N)*rise+0.02},geometry:{type:'MultiPolygon',coordinates:q}}); });
+        for(const side of [W/2,-W/2]){ resample(lineOffset(ln,side),N).forEach(([a,b],i)=>{ const q=bufferLine([a,b],0.16); if(q.length) out.push({type:'Feature',
+          properties:{...p,_src:p._id,esc,part:'rail',_phase:0,_base:-((i+1)/N)*rise,_top:-(i/N)*rise+0.9},geometry:{type:'MultiPolygon',coordinates:q}}); }); }
       }
     } }
+  return {type:'FeatureCollection',features:out}; }
+/* a single strip polygon ring around a steps centerline (for cutting floor holes) */
+function footprintRing(ln,W){ const ring=lineOffset(ln,W/2).concat(lineOffset(ln,-W/2).reverse()); ring.push(ring[0]); return ring; }
+/* floor polygons with a hole punched where each DOWN escalator descends, so the well is visible */
+function floorCutFC(features){ const strips=[];
+  for(const f of features){ const p=f.properties; if(p.highway!=='steps'||!f.geometry||!(p.conveying&&p.conveying!=='no')||escDir(p).up) continue;
+    const lines=f.geometry.type==='LineString'?[f.geometry.coordinates]:f.geometry.type==='MultiLineString'?f.geometry.coordinates:[];
+    for(const ln of lines) if(ln.length>=2){ const ring=footprintRing(ln,1.9); strips.push({ring,c:ringCentroid(ring)}); } }
+  const out=[];
+  for(const f of features){ if(!FLOORISH.includes(f.properties.indoor)||!f.geometry) continue;
+    const isMulti=f.geometry.type==='MultiPolygon', polys=isMulti?f.geometry.coordinates:f.geometry.type==='Polygon'?[f.geometry.coordinates]:null; if(!polys) continue;
+    const cut=polys.map(rings=>{ const outer=rings[0]; return [outer,...rings.slice(1),...strips.filter(s=>pir(s.c[0],s.c[1],outer)).map(s=>s.ring)]; });
+    out.push({type:'Feature',properties:f.properties,geometry:{type:isMulti?'MultiPolygon':'Polygon',coordinates:isMulti?cut:cut[0]}}); }
   return {type:'FeatureCollection',features:out}; }
 
 /* per-level colour ramp (step → tolerates fractional levels; active = white) */
@@ -340,11 +355,12 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
 
   // FPS — floors + walls (ids for hover highlight)
   fps.addSource('indoor',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   // real OpenStreetMap raster as the ground, beneath the indoor floor
   fps.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
   fps.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.45}});
-  fps.addLayer({id:'floor',type:'fill',source:'indoor',filter:['in',['get','indoor'],['literal',FLOORISH]],
+  fps.addLayer({id:'floor',type:'fill',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
     paint:{'fill-color':'#2f3a4d','fill-outline-color':'#46566f'}});
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
     paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
@@ -441,13 +457,21 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   for(let k=0;k<BUILDINGS.features.length;k++) if(BUILDINGS.features[k].properties.building==='train_station') stationG.add(GROUP[k]);
   const cands=stationG.size?[...stationG]:Object.keys(MEMBERS).map(Number);
   let g0=null,bestN=-1; for(const gid of cands){ const n=indoorLevelsOf(gid); if(n>bestN){ bestN=n; g0=gid; } }
-  selectBuilding(g0);
+  // restore from the URL hash (#lat,lng,level,heading°,group) if present, else default
+  const H=readHash();
+  selectBuilding(H&&H.g!=null&&MEMBERS[H.g]?H.g:g0);
+  if(H&&SEL_LEVELS.includes(H.lv)){ player.lng=H.lng; player.lat=H.lat; player.heading=H.hd*Math.PI/180; focusLevel(H.lv,true); }
   if(MOBILE) setStep('buildings');
   [fps,bldgs,stk,plan].forEach(m=>m.resize());
   document.getElementById('loading').remove();
   requestAnimationFrame(frame);
 })();
 
+/* dynamic URL: #lat,lng,level,heading°[,group] — bookmark/share your exact spot */
+function readHash(){ const m=location.hash.replace(/^#/,'').split(','); if(m.length<3) return null;
+  const lat=+m[0],lng=+m[1],lv=+m[2],hd=m[3]!=null?+m[3]:0,g=(m[4]!=null&&m[4]!=='')?+m[4]:null;
+  if(isNaN(lat)||isNaN(lng)||isNaN(lv)) return null; return {lat,lng,lv,hd,g}; }
+function writeHash(){ try{ history.replaceState(null,'',`#${player.lat.toFixed(6)},${player.lng.toFixed(6)},${activeLevel},${Math.round(player.heading*180/Math.PI)}${selGroup!=null?','+selGroup:''}`); }catch(_){ } }
 const setInfo=h=>document.getElementById('info').innerHTML=h;
 const stackInfo=()=>document.getElementById('stackinfo').innerHTML = SEL_LEVELS.length?`<b>${selName}</b><br>level <b>${activeLevel}</b> · ${SEL_LEVELS.length} levels`:`<b>${selName}</b><br><i>no indoor levels</i>`;
 function buildingInfo(p,mode){ const m=[]; if(p['building:levels']) m.push(p['building:levels']+' levels'); if(p.height) m.push(p.height+' m'); if(p.building&&p.building!=='yes') m.push(p.building);
@@ -490,6 +514,7 @@ function focusLevel(lv,keepPos){
   activeLevel=lv;
   const fc=levelFC(lv);
   fps.getSource('indoor').setData(fc);
+  fps.getSource('floorcut').setData(floorCutFC(fc.features));
   fps.getSource('walls3d').setData(wallsFC(fc.features,0.5));
   fps.getSource('pois3d').setData(poisFC(fc.features));
   fps.getSource('esc3d').setData(escalatorsFC(fc.features));
@@ -515,12 +540,16 @@ function landAt(fromPt,toPt){ const ux=toPt.lng-fromPt.lng, uy=toPt.lat-fromPt.l
   if(!insideWalk(lng,lat)){ const sp=spawnInside(levelFC(activeLevel)); lng=sp[0]; lat=sp[1]; }
   player.lng=lng; player.lat=lat; }
 /* board an escalator: ride down quickly, ride up over its full length */
-function startRide(z){ const {up,target}=escDir(z.p); if(target==null) return;
+/* the entrance end of an escalator (where the conveyor starts) — you can only
+   board from this end, not from the side or the exit */
+function boardPoint(z){ const ln=z.ln, a={lng:ln[0][0],lat:ln[0][1]}, b={lng:ln[ln.length-1][0],lat:ln[ln.length-1][1]}, c=z.p.conveying;
+  if(c==='backward') return b; if(c==='forward') return a; return md(player,a)<=md(player,b)?a:b; }   // 'yes'/unknown → nearest end
+function startRide(z,board){ const {up,target}=escDir(z.p); if(target==null) return;
   const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
-  const board=md(player,a)<md(player,b)?a:b, far=board===a?b:a;
+  const far=md(board,a)<md(board,b)?b:a;   // ride from the entrance to the opposite end
   turnTo=null; const run=md(board,far);
-  // both directions are a real ride at rolling-escalator pace; up traverses the
-  // whole run before switching at the top, down switches quickly after a short descent
+  // both directions ride at rolling-escalator pace; up traverses the whole run
+  // before switching at the top, down switches quickly after a short descent
   ride={from:board,to:far,target,up,t:0,dur: up ? Math.max(2.5,Math.min(7,run/ESC_SPEED)) : 1.0};
 }
 function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
@@ -669,7 +698,7 @@ function frame(t){
       if(dx||dy) tryMove(dx,dy);
       else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
         player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
-      if(rideCool<=0) for(const z of ESC){ if(z.esc && distToPolyline(player.lng,player.lat,z.ln)<1.2){ startRide(z); break; } }   // board an escalator
+      if(rideCool<=0) for(const z of ESC){ if(!z.esc) continue; const bp=boardPoint(z); if(bp&&md(player,bp)<2.6){ startRide(z,bp); break; } }   // board only from the entrance end
     }
     fpsCamera();
     if(ESC.length && (fc%2)===0) fps.setPaintProperty('esc-3d','fill-extrusion-color',escColorAnim(aPhase,HOVER==null?-2:HOVER,PICK==null?-1:PICK));   // running band
@@ -677,6 +706,7 @@ function frame(t){
     plan.jumpTo({center:[player.lng,player.lat],zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
     if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
     if((fc%2)===0) lookAt();   // hover detection — responsive
+    if((fc%30)===0) writeHash();   // keep the URL in sync with position/level
     fc++;
   }
   requestAnimationFrame(frame);
