@@ -168,12 +168,13 @@ function buildingPoints(groupId){ const pts=[]; let maxH=0;
     const g=f.geometry, rings=g.type==='Polygon'?g.coordinates:g.type==='MultiPolygon'?[].concat(...g.coordinates):[];
     for(const r of rings) for(const c of r) pts.push(c); }
   return {pts, maxH:maxH||12}; }
-function updateSelBound(){ const src=bldgs.getSource('selbound'); if(!src) return;
-  if(selGroup==null){ src.setData({type:'FeatureCollection',features:[]}); return; }
-  const {pts,maxH}=buildingPoints(selGroup), hull=convexHull(pts);
-  if(hull.length<3){ src.setData({type:'FeatureCollection',features:[]}); return; }
-  hull.push(hull[0]);
-  src.setData({type:'Feature',properties:{h:maxH},geometry:{type:'Polygon',coordinates:[hull]}}); }
+// one bounding-building hull (id = group id) for every group that has indoor
+// levels — this is the only selectable layer in the buildings view
+function selectablesFC(){ const seen=new Set(), out=[];
+  for(const k in MEMBERS){ const g=+k; if(seen.has(g)) continue; seen.add(g); if(!groupHasLevels(g)) continue;
+    const {pts,maxH}=buildingPoints(g), hull=convexHull(pts); if(hull.length<3) continue; hull.push(hull[0]);
+    out.push({type:'Feature',id:g,properties:{group:g,h:maxH},geometry:{type:'Polygon',coordinates:[hull]}}); }
+  return {type:'FeatureCollection',features:out}; }
 
 /* OSM `indoor=wall` are zero-width ways and room/shop outlines are thin rings;
    buffer them into solid quads (≈0.5 m thick) so they read as real walls in the
@@ -290,16 +291,19 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   // real OpenStreetMap raster as the ground under the 3D shells
   bldgs.addSource('osm',{type:'raster',tiles:['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','https://b.tile.openstreetmap.org/{z}/{x}/{y}.png','https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19,attribution:'© OpenStreetMap contributors'});
   bldgs.addLayer({id:'osm-ground',type:'raster',source:'osm',paint:{'raster-opacity':0.85}});
+  // parts = inert grey context (not individually selectable)
   bldgs.addSource('buildings',{type:'geojson',data:BUILDINGS});
   bldgs.addLayer({id:'buildings-3d',type:'fill-extrusion',source:'buildings',filter:['any',['has','building'],['has','building:part']],
-    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','hover'],false],'#e8b84b',
-        ['==',['get','building'],'train_station'],'#b8643c',['has','building:part'],'#8a93a3','#6b7585'],
+    paint:{'fill-extrusion-color':['case',['==',['get','building'],'train_station'],'#b8643c',['has','building:part'],'#8a93a3','#6b7585'],
       'fill-extrusion-height':['case',['has','height'],['to-number',['get','height']],['has','building:levels'],['*',['to-number',['get','building:levels']],3.2],9],
       'fill-extrusion-base':['case',['has','min_height'],['to-number',['get','min_height']],0],'fill-extrusion-opacity':0.9}});
-  // selected group shown as ONE translucent "bounding building" (convex hull, tallest part)
-  bldgs.addSource('selbound',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  bldgs.addLayer({id:'selbound-3d',type:'fill-extrusion',source:'selbound',
-    paint:{'fill-extrusion-color':'#ffd23f','fill-extrusion-height':['get','h'],'fill-extrusion-base':0,'fill-extrusion-opacity':0.35}});
+  // the ONLY selectable things: one "bounding building" hull per group that has
+  // indoor levels — faint by default, amber on hover, gold when selected
+  bldgs.addSource('selectable',{type:'geojson',data:selectablesFC()});
+  bldgs.addLayer({id:'selectable-3d',type:'fill-extrusion',source:'selectable',
+    paint:{'fill-extrusion-color':['case',['boolean',['feature-state','sel'],false],'#ffd23f',['boolean',['feature-state','hover'],false],'#e8b84b','#58a6ff'],
+      'fill-extrusion-opacity':['case',['boolean',['feature-state','sel'],false],0.4,['boolean',['feature-state','hover'],false],0.32,0.12],
+      'fill-extrusion-height':['get','h'],'fill-extrusion-base':0}});
 
   // STACK — exploded clickable levels
   // shell plate = the selected building's footprint (same gold shape as the
@@ -329,12 +333,11 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   mePlan=new maplibregl.Marker({element:arrow}).setLngLat(CENTER).addTo(plan);
 
   // building hover (pre-select + info)
-  bldgs.on('mousemove','buildings-3d',e=>{ const g=GROUP[e.features[0].id], ok=groupHasLevels(g);   // only buildings with indoor levels are selectable
-    bldgs.getCanvas().style.cursor=ok?'pointer':''; const hg=ok?g:null;
-    if(hg!==hoverGroup){ if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=hg; if(hoverGroup!=null) setGroupState(hoverGroup,'hover',true); }
-    setInfo(buildingInfo(BUILDINGS.features[g].properties, ok?'hover':'none')); });
-  bldgs.on('mouseleave','buildings-3d',()=>{ bldgs.getCanvas().style.cursor=''; if(hoverGroup!=null) setGroupState(hoverGroup,'hover',false); hoverGroup=null; setInfo(selInfo); });
-  bldgs.on('click','buildings-3d',e=>{ const g=GROUP[e.features[0].id]; if(!groupHasLevels(g)) return; selectBuilding(g); setStep('stack'); });
+  bldgs.on('mousemove','selectable-3d',e=>{ const g=e.features[0].properties.group; bldgs.getCanvas().style.cursor='pointer';
+    if(g!==hoverGroup){ if(hoverGroup!=null) bldgs.setFeatureState({source:'selectable',id:hoverGroup},{hover:false}); hoverGroup=g; bldgs.setFeatureState({source:'selectable',id:g},{hover:true}); }
+    setInfo(buildingInfo(BUILDINGS.features[g].properties,'hover')); });
+  bldgs.on('mouseleave','selectable-3d',()=>{ bldgs.getCanvas().style.cursor=''; if(hoverGroup!=null) bldgs.setFeatureState({source:'selectable',id:hoverGroup},{hover:false}); hoverGroup=null; setInfo(selInfo); });
+  bldgs.on('click','selectable-3d',e=>{ selectBuilding(e.features[0].properties.group); setStep('stack'); });
   // level click → focus
   stk.on('click','stack',e=>{ focusLevel(e.features[0].properties._lv); setStep('fps'); });
   // plan: hover → info; click → pick the component (highlighted in plan + FPS,
@@ -377,7 +380,9 @@ function buildingInfo(p,mode){ const m=[]; if(p['building:levels']) m.push(p['bu
   return `<b>${p.name||p.building||'building'}</b>${m.length?'<br>'+m.join(' · '):''}<br>${hint}`; }
 
 function selectBuilding(groupId){
-  selGroup=(groupId==null?null:groupId); updateSelBound();   // selection = one translucent bounding building
+  if(selGroup!=null) bldgs.setFeatureState({source:'selectable',id:selGroup},{sel:false});
+  selGroup=(groupId==null?null:groupId);
+  if(selGroup!=null) bldgs.setFeatureState({source:'selectable',id:selGroup},{sel:true});   // gold bounding building
   const feat=(selGroup!=null)?BUILDINGS.features[selGroup]:null;
   SEL = feat ? INDOOR.features.filter(f=>inBbox(repPoint(f.geometry),bboxOf(feat.geometry))) : INDOOR.features;
   const set=new Set(); for(const f of SEL) for(const n of parseLevels(f.properties.level)) set.add(n);
