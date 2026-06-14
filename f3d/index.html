@@ -48,7 +48,7 @@
   <img id="hose"/>
   <div id="spray"></div>
   <div id="hud">🍅 <span id="count">0</span> / 4</div>
-  <div id="hint">Hold to water · WASD move · mouse turn</div>
+  <div id="hint">Hold to water · WASD / ↑↓ move · ←→ or mouse turn</div>
   <div id="touch"><div id="stick"><div id="knob"></div></div><div id="water">WATER 💧</div></div>
   <div id="overlay">
     <h1>🌱 Water the tomato garden</h1>
@@ -64,6 +64,7 @@ const CELL=4, EYE_H=1.6;
 const PITCH=90;            // true level horizon (the elevated-centre rig below makes 90 work)
 const EARTH=40075016.686, ZOOM=20;  // fixed world scale — decouples zoom/texture from pitch
 const MOVE=3.2, MOUSE_SENS=0.0024, TOUCH_SENS=0.0042, STICK_MAX=55, TOUCH_TURN=2.4, TOUCH_MOVE=14, DEAD=10;
+const TURN=2.4;            // keyboard turn rate (rad/s) for ← / →
 const DEG=1/111320;        // metres -> degrees near (0,0)
 const S=18;                // garden size (metres, square)
 const WATER_RANGE=7, WATER_CONE=0.38, WATER_RATE=0.45;   // grow ~one plant in ~2s
@@ -169,7 +170,7 @@ function tryStep(dx,dy){
 
 /* ===== input — desktop ===== */
 const keys={};
-addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keydown',e=>{keys[e.code]=true; if(e.code.startsWith('Arrow'))e.preventDefault();});
 addEventListener('keyup',e=>keys[e.code]=false);
 const isTouch=matchMedia('(pointer: coarse)').matches||('ontouchstart'in window);
 if(isTouch) document.body.classList.add('touch');
@@ -248,7 +249,9 @@ function loop(now){
   // movement (keyboard + touch joystick), forward = heading
   const h=player.heading, fx=Math.cos(h),fy=Math.sin(h),rx=Math.sin(h),ry=-Math.cos(h);
   let fwd=0,str=0;
-  if(keys['KeyW'])fwd+=1; if(keys['KeyS'])fwd-=1; if(keys['KeyD'])str+=1; if(keys['KeyA'])str-=1;
+  if(keys['KeyW']||keys['ArrowUp'])fwd+=1; if(keys['KeyS']||keys['ArrowDown'])fwd-=1;
+  if(keys['KeyD'])str+=1; if(keys['KeyA'])str-=1;
+  if(keys['ArrowLeft'])player.heading+=TURN*dt; if(keys['ArrowRight'])player.heading-=TURN*dt;
   if(mId!==null){
     const ox=cX-aX,oy=cY-aY;
     if(Math.abs(ox)>DEAD){player.heading-=Math.max(-1,Math.min(1,ox/STICK_MAX))*TOUCH_TURN*dt;}
