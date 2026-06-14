@@ -178,7 +178,20 @@ const overlay=document.getElementById('overlay'); let started=false;
 function start(){started=true;overlay.classList.add('hidden');if(!isTouch)document.body.requestPointerLock();}
 overlay.addEventListener('click',start);
 document.addEventListener('pointerlockchange',()=>{if(isTouch||!started)return;overlay.classList.toggle('hidden',document.pointerLockElement===document.body);});
-addEventListener('mousemove',e=>{if(document.pointerLockElement===document.body) player.heading-=e.movementX*MOUSE_SENS;});
+/* pointer-locked trackpad/mouse: one finger turns (X) AND walks fwd/back (Y) */
+addEventListener('mousemove',e=>{
+  if(document.pointerLockElement!==document.body) return;
+  player.heading-=e.movementX*MOUSE_SENS;
+  const step=-e.movementY*0.045;
+  if(step){const h=player.heading; tryStep(Math.cos(h)*step,Math.sin(h)*step);}
+});
+/* two-finger pan (wheel): horizontal turns, vertical walks fwd/back */
+addEventListener('wheel',e=>{
+  if(!started) return; e.preventDefault();
+  player.heading-=e.deltaX*0.004;
+  const step=-e.deltaY*0.02;
+  if(step){const h=player.heading; tryStep(Math.cos(h)*step,Math.sin(h)*step);}
+},{passive:false});
 addEventListener('mousedown',e=>{if(document.pointerLockElement===document.body&&e.button===0) spraying=true;});
 addEventListener('mouseup',e=>{if(e.button===0) spraying=false;});
 
