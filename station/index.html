@@ -89,6 +89,7 @@ const M_LAT=111320, M_LON=111320*COSLAT, EARTH=40075016.686, WALL_H=3;
 // below ground. Lift the whole FPS scene onto a slab at BASE_Z metres → down
 // escalators / basements descend into positive-z space below it instead of being clamped.
 const BASE_Z=10;
+const FPS_ESC_ONLY=true;   // DEBUG: hide floor/walls/POIs in FPS, show only escalators
 const GAP=5, SLAB=0.6, FLOORISH=['room','area','corridor','yes','level'];
 const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(v).split(';')){const n=parseFloat(p); if(!isNaN(n)) o.push(n);} return o; };
 
@@ -204,7 +205,7 @@ function wallsFC(features,T){ const out=[];
   } return {type:'FeatureCollection',features:out}; }
 /* point POIs → small extruded marker pillars for the first-person view */
 const POI_H={door:2.2,elevator:2.6,vending_machine:1.8,shop:2.4};
-const poiKind=p=>p.highway==='elevator'?'elevator':p.amenity==='vending_machine'?'vending_machine':p.door?'door':p.shop?'shop':null;
+const poiKind=p=>p.highway==='elevator'?'elevator':p.amenity==='vending_machine'?'vending_machine':(p.door&&p.door!=='no')?'door':p.shop?'shop':null;   // door=no means NO door
 // h = hovered _src (pale gold), v = selected _src (gold), else by kind
 const poiColor=(h,v)=>['case',['==',['get','_src'],['literal',v]],'#ffd23f',['==',['get','_src'],['literal',h]],'#ffe08a',['==',['get','kind'],'elevator'],'#f0b429',['==',['get','kind'],'shop'],'#3fb950',['==',['get','kind'],'door'],'#e8543b','#58a6ff'];
 // escalator (conveying) orange, plain stairs tan; hover pale, selected gold
@@ -308,7 +309,7 @@ function describe(p){
     || (p.amenity&&cap(p.amenity))
     || (p.highway==='elevator'&&'Elevator')
     || (p.highway==='steps'&&(p.conveying&&p.conveying!=='no'?'Escalator':'Stairs'))
-    || (p.door&&('Door'+(p.door!=='yes'?' · '+cap(p.door):'')))
+    || (p.door&&p.door!=='no'&&('Door'+(p.door!=='yes'?' · '+cap(p.door):'')))
     || (p.entrance&&'Entrance')
     || (p.railway&&cap(p.railway))
     || (p.room&&('Room'+(p.room!=='yes'?' · '+cap(p.room):'')))
@@ -362,7 +363,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z,'fill-extrusion-opacity':0.55}});   // translucent slab so sub-floor (down-escalator) extrusion shows through
+    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z}});   // raised slab; holes punched for down-escalator wells
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
     paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base']}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
@@ -374,6 +375,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('esc3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'esc-3d',type:'fill-extrusion',source:'esc3d',
     paint:{'fill-extrusion-color':escColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.97}});
+  if(FPS_ESC_ONLY) ['floor','walls','pois3d'].forEach(id=>fps.setLayoutProperty(id,'visibility','none'));   // DEBUG: escalators only
 
   // BUILDINGS — 3D shells, hover/select
   BUILDINGS.features.forEach((f,i)=>f.id=i); computeGroups();
@@ -416,7 +418,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   plan.addLayer({id:'p-stairs',type:'line',source:'level',filter:['==',['get','highway'],'steps'],
     paint:{'line-color':['case',['all',['has','conveying'],['!=',['get','conveying'],'no']],'#f0883e','#caa46a'],'line-width':4}});
   // clickable POINTS — doors / elevators / vending / point-shops: circles (Point geometry only)
-  plan.addLayer({id:'p-poi',type:'circle',source:'level',filter:['all',['==',['geometry-type'],'Point'],['any',['has','shop'],['==',['get','highway'],'elevator'],['==',['get','amenity'],'vending_machine'],['has','door']]],
+  plan.addLayer({id:'p-poi',type:'circle',source:'level',filter:['all',['==',['geometry-type'],'Point'],['any',['has','shop'],['==',['get','highway'],'elevator'],['==',['get','amenity'],'vending_machine'],['all',['has','door'],['!=',['get','door'],'no']]]],
     paint:{'circle-radius':5,'circle-color':['case',['==',['get','highway'],'elevator'],'#f0b429',['has','shop'],'#3fb950',['has','door'],'#e8543b','#58a6ff'],'circle-stroke-width':['case',['==',['get','_id'],['literal',-1]],3,1.5],'circle-stroke-color':['case',['==',['get','_id'],['literal',-1]],'#ffd23f','#0d1117']}});
   const arrow=document.createElement('div'); arrow.className='me';
   mePlan=new maplibregl.Marker({element:arrow}).setLngLat(CENTER).addTo(plan);
