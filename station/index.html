@@ -89,7 +89,7 @@ const M_LAT=111320, M_LON=111320*COSLAT, EARTH=40075016.686, WALL_H=3;
 // below ground. Lift the whole FPS scene onto a slab at BASE_Z metres → down
 // escalators / basements descend into positive-z space below it instead of being clamped.
 const BASE_Z=10;
-const FPS_ESC_ONLY=true;   // DEBUG: hide floor/walls/POIs in FPS, show only escalators
+const FPS_ESC_ONLY=false;   // DEBUG: hide floor/walls/POIs in FPS, show only escalators
 const GAP=5, SLAB=0.6, FLOORISH=['room','area','corridor','yes','level'];
 const parseLevels=v=>{ if(v==null) return []; const o=[]; for(const p of String(v).split(';')){const n=parseFloat(p); if(!isNaN(n)) o.push(n);} return o; };
 
@@ -363,14 +363,14 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   fps.addSource('floorcut',{type:'geojson',data:{type:'FeatureCollection',features:[]}});   // floor with holes punched for down-escalator wells
   fps.addSource('walls3d',{type:'geojson',data:{type:'FeatureCollection',features:[]},generateId:true});
   fps.addLayer({id:'floor',type:'fill-extrusion',source:'floorcut',filter:['in',['get','indoor'],['literal',FLOORISH]],
-    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z}});   // raised slab; holes punched for down-escalator wells
+    paint:{'fill-extrusion-color':'#2f3a4d','fill-extrusion-base':BASE_Z-0.15,'fill-extrusion-height':BASE_Z,'fill-extrusion-opacity':0.55}});   // raised slab; holes punched for down-escalator wells
   fps.addLayer({id:'walls',type:'fill-extrusion',source:'walls3d',
-    paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base']}});
+    paint:{'fill-extrusion-color':'#9aa6b8','fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.6}});
   // point POIs (doors / elevators / vending / point-shops) as small 3D markers,
   // so a point picked in the plan is highlightable in first person too
   fps.addSource('pois3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'pois3d',type:'fill-extrusion',source:'pois3d',
-    paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.96}});
+    paint:{'fill-extrusion-color':poiColor(-2,-1),'fill-extrusion-height':['get','_top'],'fill-extrusion-base':['get','_base'],'fill-extrusion-opacity':0.85}});
   // escalators / stairs as rising 3D ramps
   fps.addSource('esc3d',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   fps.addLayer({id:'esc-3d',type:'fill-extrusion',source:'esc3d',
