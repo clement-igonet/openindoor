@@ -36,6 +36,10 @@
   #planzoom{position:absolute;right:12px;top:calc(10px + 31% + 6px);z-index:8;display:flex;gap:5px}
   #planzoom button{width:30px;height:30px;border:0;border-radius:7px;background:rgba(13,17,23,.85);color:#fff;font:700 16px system-ui;cursor:pointer}
   body.mobile #planzoom{display:none}
+  /* level up/down buttons in the building-levels (stack) view, bottom-left */
+  #lvlbtns{position:absolute;left:10px;bottom:14px;z-index:8;display:flex;flex-direction:column;gap:5px}
+  body:not(.mobile) #lvlbtns{left:10px;bottom:14px}
+  #lvlbtns button{width:34px;height:30px;border:0;border-radius:7px;background:rgba(13,17,23,.85);color:#fff;font:700 14px system-ui;cursor:pointer}
   .me{width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:15px solid #ffd23f;filter:drop-shadow(0 0 2px #000)}
   .attrib{position:absolute;right:6px;bottom:4px;z-index:7;color:#8b949e;font-size:10px;background:rgba(13,17,23,.6);padding:2px 6px;border-radius:5px}
   .attrib a{color:#8b949e}
@@ -58,6 +62,7 @@
   <div class="pane" id="fps"></div><span class="tag" id="tag-p" style="left:34%;top:auto;bottom:8px">🎮 first person</span>
   <div class="pane" id="plan"></div><span class="tag" style="left:auto;right:13px;top:14px">🗺 plan</span>
   <div id="planzoom"><button id="pz-in" title="zoom in">+</button><button id="pz-out" title="zoom out">−</button></div>
+  <div id="lvlbtns"><button id="lvl-up" title="up a level">▲</button><button id="lvl-dn" title="down a level">▼</button></div>
   <div id="cross"></div>
   <button id="back">‹ back</button>
   <div class="panel" id="info">hover a building</div>
@@ -435,7 +440,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
   bldgs.on('mouseleave','selectable-3d',()=>{ bldgs.getCanvas().style.cursor=''; if(hoverGroup!=null) bldgs.setFeatureState({source:'selectable',id:hoverGroup},{hover:false}); hoverGroup=null; setInfo(selInfo); });
   bldgs.on('click','selectable-3d',e=>{ selectBuilding(e.features[0].properties.group); setStep('stack'); });
   // level click → focus
-  stk.on('click','stack',e=>{ focusLevel(e.features[0].properties._lv); setStep('fps'); });
+  stk.on('click','stack',e=>{ focusLevel(e.features[0].properties._lv,true); setStep('fps'); });   // keep gps position
   // plan: hover → info; click → pick the component (highlighted in plan + FPS,
   // and the player turns to face it)
   const PLANQ=['p-poi','p-stairs','p-wall-line','p-area-line','p-area','p-walls','p-floor'];
@@ -479,7 +484,7 @@ const onLoad=m=>new Promise(r=>m.on('load',()=>{try{m.setCenterClampedToGround(f
 function readHash(){ const m=location.hash.replace(/^#/,'').split(','); if(m.length<3) return null;
   const lat=+m[0],lng=+m[1],lv=+m[2],hd=m[3]!=null?+m[3]:0,g=(m[4]!=null&&m[4]!=='')?+m[4]:null;
   if(isNaN(lat)||isNaN(lng)||isNaN(lv)) return null; return {lat,lng,lv,hd,g}; }
-function writeHash(){ try{ history.replaceState(null,'',`#${player.lat.toFixed(6)},${player.lng.toFixed(6)},${activeLevel},${Math.round(player.heading*180/Math.PI)}${selGroup!=null?','+selGroup:''}`); }catch(_){ } }
+function writeHash(){ try{ const hd=((Math.round(player.heading*180/Math.PI)%360)+360)%360; history.replaceState(null,'',`#${player.lat.toFixed(6)},${player.lng.toFixed(6)},${activeLevel},${hd}${selGroup!=null?','+selGroup:''}`); }catch(_){ } }
 const setInfo=h=>document.getElementById('info').innerHTML=h;
 const stackInfo=()=>document.getElementById('stackinfo').innerHTML = SEL_LEVELS.length?`<b>${selName}</b><br>level <b>${activeLevel}</b> · ${SEL_LEVELS.length} levels`:`<b>${selName}</b><br><i>no indoor levels</i>`;
 function buildingInfo(p,mode){ const m=[]; if(p['building:levels']) m.push(p['building:levels']+' levels'); if(p.height) m.push(p.height+' m'); if(p.building&&p.building!=='yes') m.push(p.building);
@@ -540,12 +545,15 @@ function focusLevel(lv,keepPos){
   PICK=null; HOVER=null; repaint();
   stackInfo(); hud();
 }
-/* place the player on the new level's floor near the escalator landing */
-function landAt(fromPt,toPt){ const ux=toPt.lng-fromPt.lng, uy=toPt.lat-fromPt.lat, L=Math.hypot(ux*M_LON,uy*M_LAT)||1;
-  let lng=toPt.lng+2*ux/L, lat=toPt.lat+2*uy/L;
-  if(!insideWalk(lng,lat)){ lng=toPt.lng; lat=toPt.lat; }
-  if(!insideWalk(lng,lat)) for(let r=1;r<=8;r++){ let hit=false; for(let a=0;a<8;a++){ const ang=a*Math.PI/4, nx=toPt.lng+Math.cos(ang)*r/M_LON, ny=toPt.lat+Math.sin(ang)*r/M_LAT; if(insideWalk(nx,ny)){ lng=nx; lat=ny; hit=true; break; } } if(hit) break; }
-  if(!insideWalk(lng,lat)){ const sp=spawnInside(levelFC(activeLevel)); lng=sp[0]; lat=sp[1]; }
+/* land at the escalator on the new level — stay AT the landing (never teleport to
+   the hall, or the escalator vanishes behind you); nudge to the nearest walkable
+   spot within ~15 m so the escalator is right there when you turn around */
+function landAt(fromPt,toPt){
+  let lng=toPt.lng, lat=toPt.lat;
+  if(!insideWalk(lng,lat)){
+    let hit=false;
+    for(let r=1;r<=15&&!hit;r++) for(let a=0;a<16;a++){ const ang=a*Math.PI/8, nx=toPt.lng+Math.cos(ang)*r/M_LON, ny=toPt.lat+Math.sin(ang)*r/M_LAT; if(insideWalk(nx,ny)){ lng=nx; lat=ny; hit=true; break; } }
+  }
   player.lng=lng; player.lat=lat; }
 /* board an escalator: ride down quickly, ride up over its full length */
 /* the entrance end of an escalator (where the conveyor starts) — you can only
@@ -555,15 +563,26 @@ function boardPoint(z){ const ln=z.ln, a={lng:ln[0][0],lat:ln[0][1]}, b={lng:ln[
 function startRide(z,board){ const {up,target}=escDir(z.p); if(target==null) return;
   const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]};
   const far=md(board,a)<md(board,b)?b:a;   // ride from the entrance to the opposite end
-  turnTo=null; const run=md(board,far);
-  // both directions ride at the same rolling-escalator pace over the full run
-  ride={from:board,to:far,target,up,t:0,dur:Math.max(2.5,Math.min(7,run/ESC_SPEED))};
+  turnTo=null;
+  ride={from:board,to:far,target,up,dist:0,len:Math.max(0.5,md(board,far))};
 }
-function advanceRide(dt){ ride.t+=dt/ride.dur; const t=Math.min(1,ride.t);
-  player.lng=ride.from.lng+(ride.to.lng-ride.from.lng)*t; player.lat=ride.from.lat+(ride.to.lat-ride.from.lat)*t;
+/* the escalator conveys you forward along its axis, but you can also walk (W/S)
+   to speed up or go back; reaching the far end switches level, walking back off
+   the entrance exits the ride on the current level. Heading stays free (mouse). */
+function advanceRide(dt){
+  const dirLng=ride.to.lng-ride.from.lng, dirLat=ride.to.lat-ride.from.lat;
+  const ux=dirLng*M_LON/ride.len, uy=dirLat*M_LAT/ride.len;   // unit vector board→far
+  let along=ESC_SPEED*dt;                                     // the moving escalator
+  const s=MOVE*dt, ch=Math.cos(player.heading), sh=Math.sin(player.heading); let wx=0,wy=0;
+  if(keys.KeyW||keys.ArrowUp){wx+=ch*s;wy+=sh*s;} if(keys.KeyS||keys.ArrowDown){wx-=ch*s;wy-=sh*s;}
+  along += wx*ux+wy*uy;                                       // walk component along the escalator
+  ride.dist+=along;
+  if(ride.dist<=0){ ride=null; return; }                     // walked back off the entrance
+  if(ride.dist>=ride.len){ const tgt=ride.target, fromPt=ride.from, toPt=ride.to; ride=null; rideCool=1.6; focusLevel(tgt,true); landAt(fromPt,toPt); return; }
+  const t=ride.dist/ride.len;
+  player.lng=ride.from.lng+dirLng*t; player.lat=ride.from.lat+dirLat*t;
   player.z=(ride.up?1:-1)*GAP*t;
-  player.heading=Math.atan2((ride.to.lat-ride.from.lat)*M_LAT,(ride.to.lng-ride.from.lng)*M_LON);
-  if(ride.t>=1){ const tgt=ride.target, fromPt=ride.from, toPt=ride.to; ride=null; rideCool=1.6; focusLevel(tgt,true); landAt(fromPt,toPt); } }
+}
 /* Paint hover (pale gold) + selection (solid gold) across the FPS and plan views.
    The two are independent — hover (cross passing over) NEVER changes the selection
    (PICK). Floor is never recoloured. `pickV` overrides PICK (used by the flash). */
@@ -591,7 +610,7 @@ function startFlash(){ if(PICK!=null){ flashN=6; flashAcc=0; flashOn=true; } }
 /* plan = a ~30 m-radius follow-cam centred on the player (heading-up) */
 const PLAN_RADIUS_M=30;
 function planFollowZoom(){ const cv=plan.getCanvas(), px=Math.min(cv.clientWidth||300,cv.clientHeight||300); return Math.log2(EARTH*COSLAT*px/(512*2*PLAN_RADIUS_M)); }
-function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b><br>WASD / arrows move · mouse looks · <b>space</b> selects · click FPS to capture`; }
+function hud(){ document.getElementById('hud').innerHTML=`<b>Gare de Lyon</b> · level <b>${activeLevel}</b> · 🚶 <span id="spd">0</span> km/h<br>WASD / arrows move · mouse looks · <b>space</b> selects · click FPS to capture`; }
 
 /* mobile stepped views (no-op on desktop) */
 function setStep(s){
@@ -610,6 +629,10 @@ document.getElementById('back').onclick=()=>{ if(step==='fps') setStep('stack');
 // avoids fighting that auto-fit). Adjusts an offset on top of the follow zoom.
 document.getElementById('pz-in').onclick =()=>{ planZoomAdj=Math.min(4,planZoomAdj+0.6); };
 document.getElementById('pz-out').onclick=()=>{ planZoomAdj=Math.max(-3,planZoomAdj-0.6); };
+// building-levels view: step one floor up/down, keeping the player's gps position
+const changeLevel=d=>{ const i=SEL_LEVELS.indexOf(activeLevel), j=i+d; if(i>=0&&j>=0&&j<SEL_LEVELS.length) focusLevel(SEL_LEVELS[j],true); };
+document.getElementById('lvl-up').onclick=()=>changeLevel(1);
+document.getElementById('lvl-dn').onclick=()=>changeLevel(-1);
 
 /* input */
 const keys={};
@@ -653,7 +676,7 @@ function faceTarget(lng,lat){
 }
 
 /* FPS eye (camera math verified mercator-correct) */
-const EYE_H=1.6, ZOOM_FPS=21, MOVE=2.8, TURN=2.4, ESC_SPEED=0.9;   // MOVE ≈ 10 km/h; ESC_SPEED ≈ rolling-escalator pace (m/s)
+const EYE_H=1.6, ZOOM_FPS=21, MOVE=5.6, TURN=2.4, ESC_SPEED=0.9;   // MOVE ≈ 20 km/h; ESC_SPEED ≈ rolling-escalator pace (m/s)
 function fpsCamera(){
   const H=fps.getCanvas().clientHeight||500;
   const mpp=EARTH*COSLAT/(512*Math.pow(2,ZOOM_FPS));
@@ -688,7 +711,7 @@ function selectUnderCross(){
   PICK=top.properties._src; repaint(); startFlash();
 }
 
-let last=0, fc=0;
+let last=0, fc=0, speedKmh=0, pPrev=null;
 function frame(t){
   const dt=last?Math.min(0.05,(t-last)/1000):0; last=t;
   if(rideCool>0) rideCool-=dt;
@@ -705,11 +728,20 @@ function frame(t){
       if(dx||dy) tryMove(dx,dy);
       else if(turnTo){ turnTo.el+=dt; const u=Math.min(1,turnTo.el/turnTo.dur), e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
         player.heading=turnTo.from+turnTo.delta*e; if(u>=1) turnTo=null; }
-      if(rideCool<=0) for(const z of ESC){ if(!z.esc) continue; const bp=boardPoint(z); if(bp&&md(player,bp)<2.6){ startRide(z,bp); break; } }   // board only from the entrance end
+      // board only from the entrance end AND while facing into the escalator
+      // (so an escalator behind you — e.g. just after arriving — won't auto-ride you)
+      if(rideCool<=0) for(const z of ESC){ if(!z.esc) continue; const bp=boardPoint(z); if(!bp||md(player,bp)>=2.6) continue;
+        const a={lng:z.ln[0][0],lat:z.ln[0][1]}, b={lng:z.ln[z.ln.length-1][0],lat:z.ln[z.ln.length-1][1]}, far=md(bp,a)<md(bp,b)?b:a;
+        const tHead=Math.atan2((far.lat-bp.lat)*M_LAT,(far.lng-bp.lng)*M_LON);
+        const dh=((tHead-player.heading+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+        if(Math.abs(dh)<1.2){ startRide(z,bp); break; } }
     }
     fpsCamera();
     plan.jumpTo({center:[player.lng,player.lat],zoom:planZoom+planZoomAdj,bearing:compass(),pitch:0});
     if(mePlan){ mePlan.setLngLat([player.lng,player.lat]); mePlan.setRotation(0); }
+    if(pPrev){ const d=Math.hypot((player.lng-pPrev[0])*M_LON,(player.lat-pPrev[1])*M_LAT); speedKmh+=((dt>0?d/dt*3.6:0)-speedKmh)*0.25; }
+    pPrev=[player.lng,player.lat];
+    const sp=document.getElementById('spd'); if(sp) sp.textContent=speedKmh<0.4?'0':Math.round(speedKmh);
     if((fc%2)===0) lookAt();   // hover detection — responsive
     if((fc%30)===0) writeHash();   // keep the URL in sync with position/level
     fc++;
