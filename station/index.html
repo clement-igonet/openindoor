@@ -239,14 +239,16 @@ function resample(ln,N){ const cum=[0]; let total=0;
 /* nearest mapped level above (d>0) / below (d<0) the active one */
 const levelHasFloor=lv=>floorsOf(SEL).some(f=>parseLevels(f.properties.level).includes(lv));   // skip empty mezzanines (e.g. -0.5)
 function nextLevel(d){ const c=SEL_LEVELS.filter(l=>(d>0?l>activeLevel:l<activeLevel)&&levelHasFloor(l)); return c.length?(d>0?Math.min(...c):Math.max(...c)):null; }
-/* which way does a steps way go, from the level we're on? Prefer its level span
-   (connecting lo↔hi → up from lo, down from hi), else incline/conveying. */
+/* which way does a steps way go, from the level we're on? Direction is RELATIVE to
+   the current level: an escalator is "down" only when viewed from the TOP of its
+   level span, and "up" from any lower level — so a down escalator at level 0 is an
+   up escalator at level -1. `target` (the ride destination) may be null without
+   changing the rendered direction. */
 function escDir(p){
   const levs=parseLevels(p.level).filter(n=>n>=-6&&n<=4);
-  let goesUp = levs.length>=2 ? (activeLevel < Math.max(...levs)) : (p.incline==='up'?true:p.incline==='down'?false:p.conveying==='backward'?false:true);
-  let target = goesUp?nextLevel(1):nextLevel(-1);
-  if(target==null) target = goesUp?nextLevel(-1):nextLevel(1);
-  return {up: target!=null && target>activeLevel, target};
+  const up = levs.length>=2 ? (activeLevel < Math.max(...levs))
+    : (p.incline==='up'?true:p.incline==='down'?false:p.conveying==='backward'?false:true);
+  return {up, target: up?nextLevel(1):nextLevel(-1)};
 }
 const md=(a,b)=>Math.hypot((a.lng-b.lng)*M_LON,(a.lat-b.lat)*M_LAT);
 function distToPolyline(lng,lat,ln){ let m=1e9;
